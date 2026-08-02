@@ -24,7 +24,12 @@ import { detectConflicts } from "./src/conflicts.ts";
 import { fetchDiscovery } from "./src/fetch-models.ts";
 import type { ProxyConfig } from "./src/config.ts";
 import type { UsageDocument } from "./src/fetch-usage.ts";
-import { fetchUsage, lastUsageSource } from "./src/fetch-usage.ts";
+import {
+	fetchUsage,
+	lastUsageContract,
+	lastUsageSource,
+	PREFERRED_CONTRACT,
+} from "./src/fetch-usage.ts";
 import { log } from "./src/log.ts";
 import {
 	isUsageFresh,
@@ -44,6 +49,9 @@ const TURN_FETCH_DEBOUNCE_MS = 5_000;
 
 /** Guards the legacy-source warning so it appears once per session. */
 let legacyUsageWarned = false;
+
+/** Where an operator learns how to install or update the bridge plugin. */
+const BRIDGE_DOCS_URL = "https://github.com/abix5/pi-cliproxyapi#pi-bridge";
 
 /** Pi's taskflow children run in JSON/print mode and need providers only. */
 export function isHeadlessRun(argv = process.argv): boolean {
@@ -90,20 +98,35 @@ async function loadUsageCached(
 	}
 }
 
-/** Warn once per session when quota still comes from the legacy sidecar, so
- * the deprecated path is visible rather than silently permanent. */
+/** Warn once per session when quota still comes from a pre-contract source, so
+ * a deprecated path is visible rather than silently permanent. */
 function warnIfLegacyUsageSource(ui: {
 	notify(message: string, level: "info" | "warning" | "error"): void;
 }): void {
-	if (legacyUsageWarned || lastUsageSource() !== "sidecar") return;
-	legacyUsageWarned = true;
-	ui.notify(
-		"quota is served by the legacy pi-cliproxyapi-wellknown sidecar. " +
-			"Install the pi-bridge plugin in CLIProxyAPI to use your normal API key " +
-			"and drop proxy.usageKey: " +
-			"https://github.com/abix5/pi-cliproxyapi#pi-bridge",
-		"warning",
-	);
+	if (legacyUsageWarned) return;
+	const source = lastUsageSource();
+	const contract = lastUsageContract();
+	if (source === null) return;
+
+	if (source === "sidecar") {
+		legacyUsageWarned = true;
+		ui.notify(
+			"quota is served by the legacy pi-cliproxyapi-wellknown sidecar. " +
+				"Install the pi-bridge plugin in CLIProxyAPI to use your normal API key " +
+				`and drop proxy.usageKey: ${BRIDGE_DOCS_URL}`,
+			"warning",
+		);
+		return;
+	}
+	if (contract !== null && contract < PREFERRED_CONTRACT) {
+		legacyUsageWarned = true;
+		ui.notify(
+			`the pi-bridge plugin answered with contract v${contract}; this extension ` +
+				`prefers v${PREFERRED_CONTRACT}. Quota still works, but update the plugin ` +
+				`in CLIProxyAPI for cache and account details: ${BRIDGE_DOCS_URL}`,
+			"warning",
+		);
+	}
 }
 
 /** Update the quota status segment for the current model. No-op if the model

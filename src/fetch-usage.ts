@@ -17,8 +17,11 @@ import { log } from "./log.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-/** Response contract requested from the pi-bridge plugin. */
-const CONTRACT_VERSION = "2";
+/** Response contract this client is written against. */
+export const PREFERRED_CONTRACT = 2;
+
+/** Header the bridge reads to select a contract, and echoes back. */
+const CONTRACT_HEADER = "X-Pi-Contract";
 
 const PLUGIN_USAGE_PATH = "/v0/resource/plugins/pi-bridge/dev/usage";
 const SIDECAR_USAGE_PATH = "/api/usage";
@@ -65,6 +68,7 @@ interface CacheEntry {
 	fetchedAt: number;
 	doc: UsageDocument;
 	source: UsageSource;
+	contract: number;
 }
 
 let cache: CacheEntry | null = null;
@@ -78,6 +82,11 @@ export function lastUsageSource(): UsageSource | null {
 	return cache?.source ?? null;
 }
 
+/** Which contract the cached document was served under, if any. */
+export function lastUsageContract(): number | null {
+	return cache?.contract ?? null;
+}
+
 async function getJSON(
 	url: string,
 	headers: Record<string, string>,
@@ -89,7 +98,11 @@ async function getJSON(
 	);
 	try {
 		return await fetch(url, {
-			headers: { ...headers, Accept: "application/json", "User-Agent": PLUGIN_USER_AGENT },
+			headers: {
+				...headers,
+				Accept: "application/json",
+				"User-Agent": PLUGIN_USER_AGENT,
+			},
 			signal: ctrl.signal,
 		});
 	} finally {
@@ -129,9 +142,12 @@ export async function fetchUsage(
 	// Preferred path: the plugin, using the key already configured for models.
 	if (apiKey) {
 		try {
-			const doc = await fetchFromPlugin(origin, apiKey);
-			cache = { fetchedAt: Date.now(), doc, source: "plugin" };
-			log.debug("usage fetched from plugin, accounts:", doc.accounts.length);
+			const { doc, contract } = await fetchFromPlugin(origin, apiKey);
+			cache = { fetchedAt: Date.now(), doc, source: "plugin", contract };
+			log.debug(
+				`usage fetched from plugin (contract v${contract}), accounts:`,
+				doc.accounts.length,
+			);
 			return doc;
 		} catch (err) {
 			// Fall back only when a usage key exists; otherwise surface the error
@@ -148,23 +164,36 @@ export async function fetchUsage(
 	}
 
 	const doc = await fetchFromSidecar(origin, resolvedUsageKey);
-	cache = { fetchedAt: Date.now(), doc, source: "sidecar" };
+	// The sidecar predates contracts and only ever served the v1 shape.
+	cache = { fetchedAt: Date.now(), doc, source: "sidecar", contract: 1 };
 	log.debug("usage fetched from sidecar, accounts:", doc.accounts.length);
 	return doc;
 }
 
+/**
+ * Ask the bridge for the newest contract this client understands.
+ *
+ * A bridge that predates contracts ignores the header and answers with the v1
+ * document; it is detected by the absent echo, and its response is used as-is.
+ * That keeps a new client working against an old bridge without a second
+ * round-trip or a version probe.
+ */
 async function fetchFromPlugin(
 	origin: string,
 	apiKey: string,
-): Promise<UsageDocument> {
+): Promise<{ doc: UsageDocument; contract: number }> {
 	const resp = await getJSON(new URL(PLUGIN_USAGE_PATH, origin).toString(), {
 		Authorization: `Bearer ${apiKey}`,
-		"X-Pi-Contract": CONTRACT_VERSION,
+		[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
 	});
 	if (!resp.ok) {
 		throw new Error(`pi-bridge usage returned ${resp.status}`);
 	}
-	return parseUsage(await resp.json(), "pi-bridge usage");
+
+	const doc = parseUsage(await resp.json(), "pi-bridge usage");
+	const echoed = Number.parseInt(resp.headers.get(CONTRACT_HEADER) ?? "", 10);
+	const contract = Number.isNaN(echoed) ? 1 : echoed;
+	return { doc, contract };
 }
 
 async function fetchFromSidecar(
