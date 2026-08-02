@@ -24,7 +24,7 @@ import { detectConflicts } from "./src/conflicts.ts";
 import { fetchDiscovery } from "./src/fetch-models.ts";
 import type { ProxyConfig } from "./src/config.ts";
 import type { UsageDocument } from "./src/fetch-usage.ts";
-import { fetchUsage } from "./src/fetch-usage.ts";
+import { fetchUsage, lastUsageSource } from "./src/fetch-usage.ts";
 import { log } from "./src/log.ts";
 import {
 	isUsageFresh,
@@ -41,6 +41,21 @@ const QUOTA_STATUS_KEY = "0quota";
 /** Minimum gap between network fetches triggered by turn_end, even if the
  * shared file cache is stale (prevents burst fetches during rapid turns). */
 const TURN_FETCH_DEBOUNCE_MS = 5_000;
+
+/** Guards the legacy-source warning so it appears once per session. */
+let legacyUsageWarned = false;
+
+/** Pi's taskflow children run in JSON/print mode and need providers only. */
+export function isHeadlessRun(argv = process.argv): boolean {
+	const modeIndex = argv.indexOf("--mode");
+	const mode = modeIndex >= 0 ? argv[modeIndex + 1] : undefined;
+	return (
+		mode === "json" ||
+		mode === "print" ||
+		argv.includes("-p") ||
+		argv.includes("--print")
+	);
+}
 
 /**
  * Fetch usage data through the shared file cache: if the on-disk cache is
@@ -75,6 +90,22 @@ async function loadUsageCached(
 	}
 }
 
+/** Warn once per session when quota still comes from the legacy sidecar, so
+ * the deprecated path is visible rather than silently permanent. */
+function warnIfLegacyUsageSource(ui: {
+	notify(message: string, level: "info" | "warning" | "error"): void;
+}): void {
+	if (legacyUsageWarned || lastUsageSource() !== "sidecar") return;
+	legacyUsageWarned = true;
+	ui.notify(
+		"quota is served by the legacy pi-cliproxyapi-wellknown sidecar. " +
+			"Install the pi-bridge plugin in CLIProxyAPI to use your normal API key " +
+			"and drop proxy.usageKey: " +
+			"https://github.com/abix5/pi-cliproxyapi#pi-bridge",
+		"warning",
+	);
+}
+
 /** Update the quota status segment for the current model. No-op if the model
  * has no quota windows (e.g. a custom provider) or if usage is unavailable. */
 async function refreshQuotaStatus(
@@ -93,10 +124,6 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	if (!resolvedUsageKey) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
-		return;
-	}
 	const doc = await loadUsageCached(cfg, resolvedUsageKey, opts);
 	if (!doc) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
@@ -107,7 +134,8 @@ async function refreshQuotaStatus(
 }
 
 export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
-	registerCommands(pi);
+	const headless = isHeadlessRun();
+	if (!headless) registerCommands(pi);
 
 	const cfg = loadConfig();
 	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
@@ -118,9 +146,11 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 
-	// Conflict scan is read-only and cheap; do it once at startup.
-	const conflicts = detectConflicts(cfg);
-	for (const c of conflicts) log.warn(`conflict (${c.kind}): ${c.detail}`);
+	// Conflict scanning only feeds the interactive diagnostics UI.
+	if (!headless) {
+		const conflicts = detectConflicts(cfg);
+		for (const c of conflicts) log.warn(`conflict (${c.kind}): ${c.detail}`);
+	}
 
 	try {
 		const cached = readDiscoveryCache();
@@ -132,18 +162,24 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 				`discovery from cache (age ${Math.round(cached.ageMs / 1000)}s): ${cached.discovery.builtinProviders.length} builtin, ${cached.discovery.customPool.length} custom`,
 			);
 			await applyAll(pi, cfg, cached.discovery);
-			void (async () => {
-				try {
-					const fresh = await fetchDiscovery(cfg, resolvedKey);
-					await applyAll(pi, cfg, fresh);
-					log.debug("discovery revalidated from network");
-				} catch (e) {
-					log.warn(
-						"background discovery revalidate failed:",
-						(e as Error).message,
-					);
-				}
-			})();
+			if (!headless) {
+				void (async () => {
+					try {
+						const fresh = await fetchDiscovery(cfg, resolvedKey);
+						await applyAll(pi, cfg, fresh);
+						log.debug("discovery revalidated from network");
+					} catch (e) {
+						log.warn(
+							"background discovery revalidate failed:",
+							(e as Error).message,
+						);
+					}
+				})();
+			}
+		} else if (headless) {
+			log.warn(
+				"discovery cache missing in headless run — no providers registered",
+			);
 		} else {
 			const discovery = await fetchDiscovery(cfg, resolvedKey);
 			await applyAll(pi, cfg, discovery);
@@ -153,7 +189,7 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 		// Commands stay registered; user can open /cliproxy and press r to refresh.
 	}
 
-	if (cfg.refreshIntervalMinutes > 0) {
+	if (!headless && cfg.refreshIntervalMinutes > 0) {
 		const ms = cfg.refreshIntervalMinutes * 60_000;
 		setInterval(() => {
 			void (async () => {
@@ -178,14 +214,19 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 	// model's provider only (anthropic→claude, openai→codex, custom→hidden).
 	// The shared file cache ensures multiple Pi instances don't fetch more than
 	// once every 2 minutes.
-	const resolvedUsageKey = resolveConfigValue(cfg.proxy.usageKey);
-	if (resolvedUsageKey) {
+	const resolvedUsageKey = headless
+		? ""
+		: resolveConfigValue(cfg.proxy.usageKey);
+	// Quota is available through the pi-bridge plugin (ordinary API key) or the
+	// legacy sidecar (separate usage key), so either credential enables it.
+	if (resolvedUsageKey || cfg.proxy.apiKey) {
 		let lastTurnFetchMs = 0;
 
 		// session_start: render immediately from cache (no fetch needed if fresh).
 		pi.on("session_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
 			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
+			warnIfLegacyUsageSource(ctx.ui);
 		});
 
 		// model_select: re-render for the new provider. Read from cache so the

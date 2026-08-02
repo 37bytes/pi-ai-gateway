@@ -81,6 +81,33 @@ pi install npm:pi-cliproxyapi
 
 Then run `/cliproxy-setup` to configure your proxy endpoint.
 
+### Taskflow child agents
+
+Taskflow starts children with an extension allowlist, so add this package's entrypoint
+there as well; otherwise the child cannot register the proxy-backed model catalog.
+For a normal npm installation:
+
+```jsonc
+{
+  "taskflow": {
+    "piChild": {
+      "resourceProfile": "allowlist",
+      "extensions": [
+        "/Users/your-user/.pi/agent/npm/node_modules/pi-cliproxyapi/index.ts"
+      ]
+    }
+  }
+}
+```
+
+Use a real **absolute** path: taskflow does not expand `~`, so replace
+`/Users/your-user` with your home directory. Preserve any existing allowlisted
+extensions (such as taskflow's path guard and MCP adapter). For a local checkout, use
+its absolute `index.ts` path instead. A child running in JSON/print mode reads the
+discovery cache and registers providers without discovery, usage, command, status, or
+timer work. Start Pi once interactively after configuring the proxy to populate that
+cache.
+
 ## Config
 
 `~/.pi/agent/pi-cliproxyapi/config.json` — created by `/cliproxy-setup`, editable by hand. If only the legacy `~/.config/pi-cliproxyapi/config.json` exists, an installed plugin moves it here once; a local checkout copies it and retains the legacy file.
@@ -172,6 +199,7 @@ Then route `/.well-known/pi` and `/api/usage` on your public domain to port 3458
 ### Connecting the plugin
 
 Run `/cliproxy-setup` in Pi and enter:
+
 - **endpoint** — your public proxy URL ending with `/v1`
 - **apiKey** — CliProxyAPI bearer key
 - **providerPrefix** — short slug for custom provider names (e.g. `corp`, `myproxy`)

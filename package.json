@@ -26,7 +26,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts"
+    "check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts",
+    "check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
