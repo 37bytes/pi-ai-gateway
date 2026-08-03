@@ -15,6 +15,8 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import fs from "node:fs";
+import path from "node:path";
 
 import { applyAll } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
@@ -156,7 +158,43 @@ async function refreshQuotaStatus(
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 
+/**
+ * True when THIS module is the globally-installed copy (its file lives under a
+ * `node_modules` tree), as opposed to a working-tree checkout.
+ */
+function isInstalledCopy(): boolean {
+	try {
+		return import.meta.url.includes("/node_modules/");
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * True when the current project is a dev checkout of this extension that loads
+ * its own working-tree source through `.pi/extensions/cliproxyapi.ts`.
+ */
+function localDevLoaderPresent(cwd: string): boolean {
+	try {
+		return (
+			fs.existsSync(path.join(cwd, ".pi", "extensions", "cliproxyapi.ts")) &&
+			fs.existsSync(path.join(cwd, "src", "fetch-usage.ts"))
+		);
+	} catch {
+		return false;
+	}
+}
+
 export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
+	// Mode guard: inside this extension's own checkout the project-local loader
+	// already supplies the working-tree source. If the published package is also
+	// installed globally, both copies would load in one process and register the
+	// same providers twice, so the installed copy stands down and the dev source
+	// wins.
+	if (isInstalledCopy() && localDevLoaderPresent(process.cwd())) {
+		return;
+	}
+
 	const headless = isHeadlessRun();
 	if (!headless) registerCommands(pi);
 

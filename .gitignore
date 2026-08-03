@@ -8,3 +8,6 @@ dist/
 .vscode/
 *.tsbuildinfo
 .pi-lens/
+
+# Project-local dev loader (see README: dev mode)
+.pi/extensions/*.disabled
