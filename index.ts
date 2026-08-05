@@ -32,7 +32,7 @@ import {
 	lastUsageSource,
 	PREFERRED_CONTRACT,
 } from "./src/fetch-usage.ts";
-import { log } from "./src/log.ts";
+import { log, setLogSink } from "./src/log.ts";
 import {
 	isUsageFresh,
 	readUsageCache,
@@ -97,6 +97,32 @@ async function loadUsageCached(
 		return cached?.doc ?? null;
 	} finally {
 		releaseUsageLock(token);
+	}
+}
+
+/**
+ * Refresh discovery over the network after the cached copy was applied.
+ *
+ * The extension handle captured at startup becomes invalid once pi replaces or
+ * reloads the session, so a slow refresh that finishes afterwards must not try
+ * to register providers with it. That case is expected, not an error.
+ */
+async function revalidateDiscovery(
+	pi: ExtensionAPI,
+	cfg: ProxyConfig,
+	resolvedKey: string,
+): Promise<void> {
+	try {
+		const fresh = await fetchDiscovery(cfg, resolvedKey);
+		await applyAll(pi, cfg, fresh);
+		log.debug("discovery revalidated from network");
+	} catch (e) {
+		const message = (e as Error).message ?? "";
+		if (message.includes("stale after session replacement")) {
+			log.debug("discovery revalidate skipped: session was replaced");
+			return;
+		}
+		log.warn("background discovery revalidate failed:", message);
 	}
 }
 
@@ -198,6 +224,13 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 	const headless = isHeadlessRun();
 	if (!headless) registerCommands(pi);
 
+	// Route later messages through pi's notification channel. Startup runs before
+	// any session exists, so those messages have no UI to reach and are kept off
+	// the terminal instead (see log.ts).
+	pi.on("session_start", (_event, ctx) => {
+		setLogSink(ctx.hasUI ? ctx.ui : null);
+	});
+
 	const cfg = loadConfig();
 	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
 	if (!resolvedKey) {
@@ -224,18 +257,11 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 			);
 			await applyAll(pi, cfg, cached.discovery);
 			if (!headless) {
-				void (async () => {
-					try {
-						const fresh = await fetchDiscovery(cfg, resolvedKey);
-						await applyAll(pi, cfg, fresh);
-						log.debug("discovery revalidated from network");
-					} catch (e) {
-						log.warn(
-							"background discovery revalidate failed:",
-							(e as Error).message,
-						);
-					}
-				})();
+				// Revalidate in the background, but bind the work to the session
+				// that started it: pi invalidates the extension handle when the
+				// session is replaced or reloaded, and using a captured handle
+				// afterwards throws.
+				void revalidateDiscovery(pi, cfg, resolvedKey);
 			}
 		} else if (headless) {
 			log.warn(
