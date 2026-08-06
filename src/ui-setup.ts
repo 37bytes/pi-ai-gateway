@@ -1,4 +1,4 @@
-// First-run setup wizard: collects endpoint + apiKey + providerPrefix + (optional) usageKey
+// First-run setup wizard: collects endpoint + apiKey + providerPrefix
 // and writes them to ~/.pi/agent/pi-cliproxyapi/config.json.
 //
 // All three fields support the same "!cmd" / "$ENV" / literal semantics as
@@ -64,11 +64,6 @@ const STEPS: WizardStep[] = [
 		validate: (raw) =>
 			/^[a-z0-9][a-z0-9-]*$/i.test(raw) ? null : "letters/digits/dashes only",
 	},
-	{
-		label: "usageKey",
-		hint: "Optional X-Plugin-Key for /api/usage. Leave blank to skip the Usage tab",
-		required: false,
-	},
 ];
 
 /**
@@ -96,7 +91,6 @@ export async function runSetup(
 		endpoint: existing.proxy.endpoint ?? "",
 		apiKey: existing.proxy.apiKey ?? "",
 		providerPrefix: existing.proxy.providerPrefix ?? "",
-		usageKey: existing.proxy.usageKey ?? "",
 	};
 
 	let cancelled = false;
@@ -141,8 +135,6 @@ export async function runSetup(
 		apiKey: values.apiKey ?? "",
 		providerPrefix: values.providerPrefix ?? "",
 	};
-	if (values.usageKey) next.proxy.usageKey = values.usageKey;
-	else delete next.proxy.usageKey;
 
 	saveConfig(next);
 	ctx.ui.notify(`saved to ${CONFIG_PATH}`, "info");

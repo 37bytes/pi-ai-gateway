@@ -71,7 +71,7 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 
 You need a running [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance — this is the corporate LLM proxy that aggregates multiple providers behind a single OpenAI-compatible endpoint.
 
-For full functionality (Usage tab, enriched model metadata from [models.dev](https://models.dev)), also deploy the companion sidecar: **[pi-cliproxyapi-wellknown](https://github.com/abix5/pi-cliproxyapi-wellknown)**. See [Deploying the sidecar](#deploying-the-sidecar-service) below.
+For full functionality (Usage tab, enriched model metadata from [models.dev](https://models.dev)), also install the **[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin into that instance. See [Discovery](#discovery) below.
 
 ## Install
 
@@ -117,8 +117,7 @@ cache.
   "proxy": {
     "endpoint": "https://proxy.example.com/v1",
     "apiKey": "!cat ~/.pi/agent/pi-cliproxyapi/key",
-    "providerPrefix": "corp",
-    "usageKey": "!cat ~/.pi/agent/pi-cliproxyapi/usage-key"
+    "providerPrefix": "corp"
   },
   "builtinProviders": {
     "anthropic": { "enabled": true, "models": ["claude-opus-4-7"] },
@@ -137,82 +136,56 @@ Values support `!command` (shell exec), `$ENV_VAR`, or literal strings. The `/cl
 
 ## Discovery
 
-The plugin tries `GET <endpoint-origin>/.well-known/pi` first (requires the sidecar). If unavailable, falls back to `GET <endpoint>/models` with local heuristics.
-
-## Deploying the sidecar service
-
-The **[pi-cliproxyapi-wellknown](https://github.com/abix5/pi-cliproxyapi-wellknown)** sidecar runs alongside CliProxyAPI and provides:
-
-- `/.well-known/pi` — model discovery with metadata from [models.dev](https://models.dev) (context windows, costs, reasoning flags)
-- `/api/usage` — per-account quota windows used by the hub Usage tab
+The extension reads the model catalogue and provider quota from the
+**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin running
+inside CliProxyAPI, authenticating with the same `apiKey` it uses for model
+calls. No second credential and no extra container are involved.
 
 ```
-┌──────────────┐     ┌───────────────────────────┐
-│  Pi + plugin │────▶│  CliProxyAPI (:8317)      │
-│              │     │  /v1/models, /v1/chat/... │
-│              │     └───────────────────────────┘
-│              │     ┌───────────────────────────┐
-│              │────▶│  wellknown sidecar (:3458)│
-│              │     │  /.well-known/pi          │
-│              │     │  /api/usage               │
-│              │     └───────────────────────────┘
-└──────────────┘
+┌──────────────┐     ┌────────────────────────────────────────┐
+│  Pi + plugin │────▶│  CliProxyAPI                           │
+│              │     │  /v1/models, /v1/chat/...              │
+│              │     │  /v0/resource/plugins/pi-bridge/…      │
+│              │     │      well-known → model catalogue      │
+│              │     │      usage      → per-account quota    │
+└──────────────┘     └────────────────────────────────────────┘
 ```
 
-### Quick start with Docker Compose
+Without the plugin the extension still works: it falls back to raw `/v1/models`
+with local heuristics.
 
-Clone the sidecar repo next to your CliProxyAPI deployment:
+| | With pi-bridge | Without |
+| --- | --- | --- |
+| Model discovery | Enriched from [models.dev](https://models.dev) — real context windows, costs, reasoning flags | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0` |
+| Usage tab | Per-account quota bars | Unavailable |
+| Classification | Server-side | Local heuristics by `owned_by` |
 
-```bash
-git clone https://github.com/abix5/pi-cliproxyapi-wellknown.git
-```
+See the plugin's README for installing it into CliProxyAPI.
 
-Add to your `docker-compose.yml`:
-
-```yaml
-services:
-  cliproxyapi:
-    # ... your existing CliProxyAPI service ...
-
-  pi-cliproxyapi-wellknown:
-    build:
-      context: ./pi-cliproxyapi-wellknown
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:3458:3458"
-    environment:
-      UPSTREAM_MODELS_URL: http://cliproxyapi:8317/v1/models
-      UPSTREAM_TOKEN: ${UPSTREAM_TOKEN}          # CliProxyAPI bearer key
-      PI_PUBLIC_BASE_URL: ${PI_PUBLIC_BASE_URL}  # e.g. https://proxy.example.com/v1
-      MANAGEMENT_API_URL: http://cliproxyapi:8317/v0/management
-      MANAGEMENT_API_KEY: ${MANAGEMENT_API_KEY}
-      PI_PLUGIN_USAGE_KEY: ${PI_PLUGIN_USAGE_KEY}  # shared with Pi plugin
-    depends_on:
-      cliproxyapi:
-        condition: service_healthy
-    networks:
-      - your-network
-```
-
-Then route `/.well-known/pi` and `/api/usage` on your public domain to port 3458 via your reverse proxy (Nginx, Caddy, Cloudflare Tunnel, etc.).
-
-### Connecting the plugin
+## Setup
 
 Run `/cliproxy-setup` in Pi and enter:
 
 - **endpoint** — your public proxy URL ending with `/v1`
 - **apiKey** — CliProxyAPI bearer key
-- **providerPrefix** — short slug for custom provider names (e.g. `corp`, `myproxy`)
-- **usageKey** — same value as `PI_PLUGIN_USAGE_KEY` above (enables the Usage tab)
+- **providerPrefix** — short slug for custom provider names (e.g. `corp`)
 
-The sidecar is **optional for basic usage** — without it the plugin falls back to raw `/v1/models` with local heuristics. What changes:
+## Migrating from the wellknown sidecar
 
-| | With sidecar | Without sidecar |
-| --- | --- | --- |
-| Model discovery | Enriched from [models.dev](https://models.dev) (real context windows, costs, reasoning) | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0`, `reasoning=false` |
-| Usage tab | Works — per-account quota bars | **Does not work** (no `/api/usage` endpoint) |
-| Classification | Server-side, accurate | Local heuristics by `owned_by` |
-| `/cliproxy` hub | Works | Works (Usage tab shows an error) |
+Earlier versions read `/.well-known/pi` and `/api/usage` from a separate
+`pi-cliproxyapi-wellknown` container, which needed its own `usageKey`. Version
+0.4.0 reads both from the pi-bridge plugin instead.
+
+1. Install pi-bridge into CliProxyAPI (see its README).
+2. Update this extension to 0.4.0 or later.
+3. Confirm the Usage tab still populates — it now says `source=plugin`.
+4. Drop the sidecar's routes from your reverse proxy, then stop the container.
+5. Remove `proxy.usageKey` from the config above; it is no longer read by the
+   setup wizard and is only consulted as a fallback.
+
+Steps 1–2 are safe in either order: until the plugin answers, the extension
+keeps using the sidecar, and a version older than 0.4.0 keeps working against a
+server that already runs the plugin.
 
 ## Layout
 
@@ -222,8 +195,8 @@ src/
   config.ts         ~/.pi/agent/pi-cliproxyapi/config.json
   commands.ts       2 slash commands (hub + setup)
   apply.ts          pi.registerProvider calls
-  fetch-models.ts   well-known + /v1/models fallback
-  fetch-usage.ts    /api/usage client with TTL cache
+  fetch-models.ts   catalogue from pi-bridge, /v1/models fallback
+  fetch-usage.ts    quota from pi-bridge, sidecar fallback, TTL cache
   compat.ts         baseUrl derivation, model classification
   conflicts.ts      read-only ~/.pi/{models,auth}.json scan
   ui-frame.ts       single source of truth for overlay frames

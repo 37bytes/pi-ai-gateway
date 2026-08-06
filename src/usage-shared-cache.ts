@@ -28,8 +28,15 @@ import { log } from "./log.ts";
 export const USAGE_CACHE_PATH = join(CONFIG_DIR, "usage-cache.json");
 export const USAGE_LOCK_PATH = join(CONFIG_DIR, "usage-cache.lock");
 
-/** Minimum interval between network fetches, shared across all Pi instances. */
-export const USAGE_CACHE_TTL_MS = 120_000; // 2 minutes
+/**
+ * Minimum interval between network fetches, shared across all Pi instances.
+ *
+ * This throttles calls to the bridge only, which are cheap: the bridge holds
+ * its own cache and is the only thing that talks to the providers, whose rate
+ * limits are the real constraint. So it can be short enough for the status line
+ * to react to a finished turn.
+ */
+export const USAGE_CACHE_TTL_MS = 15_000;
 /** A lock file older than this is considered stale (process crashed). */
 const LOCK_STALE_MS = 30_000;
 

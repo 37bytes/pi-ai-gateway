@@ -22,7 +22,7 @@
 //     "discoveryExcludes": ["*:*"],
 //     "overrides": {},
 //     "refreshIntervalMinutes": 0,
-//     "usageCacheTtlMs": 30000
+//     "usageCacheTtlMs": 15000
 //   }
 
 import { execSync } from "node:child_process";
@@ -143,7 +143,7 @@ const DEFAULT_CONFIG: ProxyConfig = {
 	discoveryExcludes: ["*:*"],
 	overrides: {},
 	refreshIntervalMinutes: 0,
-	usageCacheTtlMs: 30_000,
+	usageCacheTtlMs: 15_000,
 };
 
 export function loadConfig(): ProxyConfig {
