@@ -21,7 +21,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 export const PREFERRED_CONTRACT = 2;
 
 /** Header the bridge reads to select a contract, and echoes back. */
-const CONTRACT_HEADER = "X-Pi-Contract";
+export const CONTRACT_HEADER = "X-Pi-Contract";
 
 const PLUGIN_USAGE_PATH = "/v0/resource/plugins/pi-bridge/dev/usage";
 const SIDECAR_USAGE_PATH = "/api/usage";
