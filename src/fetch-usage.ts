@@ -193,7 +193,10 @@ async function fetchFromPlugin(
 		[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
 	};
 
-	let resp = await getJSON(new URL(PLUGIN_USAGE_PATH, origin).toString(), headers);
+	let resp = await getJSON(
+		new URL(PLUGIN_USAGE_PATH, origin).toString(),
+		headers,
+	);
 	if (resp.status === 404) {
 		// Older bridge: only the testing path exists.
 		resp = await getJSON(
