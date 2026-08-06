@@ -116,7 +116,10 @@ function discoveryUrl(endpoint: string): string | null {
 }
 
 /** Model catalogue served by the pi-bridge plugin inside CLIProxyAPI. */
-const PLUGIN_DISCOVERY_PATH = "/v0/resource/plugins/pi-bridge/dev/well-known";
+const PLUGIN_DISCOVERY_PATH = "/v0/resource/plugins/pi-bridge/well-known";
+/** Path used while the plugin was in testing; kept for older deployments. */
+const PLUGIN_DISCOVERY_PATH_LEGACY =
+	"/v0/resource/plugins/pi-bridge/dev/well-known";
 
 // --------------------------------------------------------------------------- well-known path
 
@@ -137,16 +140,19 @@ async function tryWellKnown(cfg: ProxyConfig): Promise<Discovery | null> {
 
 	const apiKey = cfg.proxy.apiKey ? resolveConfigValue(cfg.proxy.apiKey) : "";
 	if (apiKey) {
-		const viaPlugin = await tryDiscoverySource(
-			cfg,
-			new URL(PLUGIN_DISCOVERY_PATH, origin).toString(),
-			{
-				Authorization: `Bearer ${apiKey}`,
-				[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
-			},
-			"pi-bridge",
-		);
-		if (viaPlugin) return viaPlugin;
+		const headers = {
+			Authorization: `Bearer ${apiKey}`,
+			[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
+		};
+		for (const path of [PLUGIN_DISCOVERY_PATH, PLUGIN_DISCOVERY_PATH_LEGACY]) {
+			const viaPlugin = await tryDiscoverySource(
+				cfg,
+				new URL(path, origin).toString(),
+				headers,
+				"pi-bridge",
+			);
+			if (viaPlugin) return viaPlugin;
+		}
 	}
 
 	const legacy = discoveryUrl(cfg.proxy.endpoint);

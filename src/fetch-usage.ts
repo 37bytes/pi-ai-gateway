@@ -12,6 +12,7 @@
 // cached in memory; callers pass `force: true` to bypass it.
 
 import type { ProxyConfig } from "./config.ts";
+import { resolveConfigValue } from "./config.ts";
 import { PLUGIN_USER_AGENT } from "./fetch-models.ts";
 import { log } from "./log.ts";
 
@@ -23,7 +24,11 @@ export const PREFERRED_CONTRACT = 2;
 /** Header the bridge reads to select a contract, and echoes back. */
 export const CONTRACT_HEADER = "X-Pi-Contract";
 
-const PLUGIN_USAGE_PATH = "/v0/resource/plugins/pi-bridge/dev/usage";
+/** Routes served by the pi-bridge plugin inside CLIProxyAPI. */
+const PLUGIN_BASE = "/v0/resource/plugins/pi-bridge";
+const PLUGIN_USAGE_PATH = `${PLUGIN_BASE}/usage`;
+/** Path used while the plugin was in testing; kept for older deployments. */
+const PLUGIN_USAGE_PATH_LEGACY = `${PLUGIN_BASE}/dev/usage`;
 const SIDECAR_USAGE_PATH = "/api/usage";
 
 /** Where a usage document came from. */
@@ -137,7 +142,8 @@ export async function fetchUsage(
 	} catch {
 		throw new Error(`proxy.endpoint is not a valid URL: ${cfg.proxy.endpoint}`);
 	}
-	const apiKey = cfg.proxy.apiKey ?? "";
+	// The key may be a `!command` reference, so it must be resolved before use.
+	const apiKey = cfg.proxy.apiKey ? resolveConfigValue(cfg.proxy.apiKey) : "";
 
 	// Preferred path: the plugin, using the key already configured for models.
 	if (apiKey) {
@@ -182,10 +188,19 @@ async function fetchFromPlugin(
 	origin: string,
 	apiKey: string,
 ): Promise<{ doc: UsageDocument; contract: number }> {
-	const resp = await getJSON(new URL(PLUGIN_USAGE_PATH, origin).toString(), {
+	const headers = {
 		Authorization: `Bearer ${apiKey}`,
 		[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
-	});
+	};
+
+	let resp = await getJSON(new URL(PLUGIN_USAGE_PATH, origin).toString(), headers);
+	if (resp.status === 404) {
+		// Older bridge: only the testing path exists.
+		resp = await getJSON(
+			new URL(PLUGIN_USAGE_PATH_LEGACY, origin).toString(),
+			headers,
+		);
+	}
 	if (!resp.ok) {
 		throw new Error(`pi-bridge usage returned ${resp.status}`);
 	}
