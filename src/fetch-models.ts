@@ -17,11 +17,25 @@ import {
 	normalizeSuggestedProvider,
 	reasoningFromId,
 } from "./compat.ts";
+import { readFileSync } from "node:fs";
+
 import { writeDiscoveryCache } from "./cache.ts";
 import type { ProxyConfig } from "./config.ts";
+import { resolveConfigValue } from "./config.ts";
+import { CONTRACT_HEADER, PREFERRED_CONTRACT } from "./fetch-usage.ts";
 import { log } from "./log.ts";
 
-export const PLUGIN_USER_AGENT = "pi-cliproxyapi/0.3.5";
+/** Extension version, read from the manifest so there is one source of truth. */
+export const PLUGIN_VERSION: string = (() => {
+	try {
+		const manifest = new URL("../package.json", import.meta.url);
+		return JSON.parse(readFileSync(manifest, "utf8")).version ?? "unknown";
+	} catch {
+		return "unknown";
+	}
+})();
+
+export const PLUGIN_USER_AGENT = `pi-cliproxyapi/${PLUGIN_VERSION}`;
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface DiscoveryModelEntry {
@@ -87,40 +101,96 @@ async function fetchWithTimeout(
 	}
 }
 
-function discoveryUrl(endpoint: string): string {
-	return new URL("/.well-known/pi", new URL(endpoint).origin).toString();
+/** Origin of the proxy endpoint, or null when it is not a usable URL. */
+function endpointOrigin(endpoint: string): string | null {
+	try {
+		return new URL(endpoint).origin;
+	} catch {
+		return null;
+	}
 }
+
+function discoveryUrl(endpoint: string): string | null {
+	const origin = endpointOrigin(endpoint);
+	return origin ? new URL("/.well-known/pi", origin).toString() : null;
+}
+
+/** Model catalogue served by the pi-bridge plugin inside CLIProxyAPI. */
+const PLUGIN_DISCOVERY_PATH = "/v0/resource/plugins/pi-bridge/well-known";
+/** Path used while the plugin was in testing; kept for older deployments. */
+const PLUGIN_DISCOVERY_PATH_LEGACY =
+	"/v0/resource/plugins/pi-bridge/dev/well-known";
 
 // --------------------------------------------------------------------------- well-known path
 
+/**
+ * Fetch the model catalogue.
+ *
+ * The pi-bridge plugin is preferred: it authenticates with the API key already
+ * configured for model calls and answers the newest contract. A deployment
+ * still running the standalone sidecar has no such route, so the legacy
+ * unauthenticated path remains as a fallback.
+ */
 async function tryWellKnown(cfg: ProxyConfig): Promise<Discovery | null> {
-	const url = discoveryUrl(cfg.proxy.endpoint);
+	const origin = endpointOrigin(cfg.proxy.endpoint);
+	if (!origin) {
+		log.warn(`proxy.endpoint is not a valid URL: ${cfg.proxy.endpoint}`);
+		return null;
+	}
+
+	const apiKey = cfg.proxy.apiKey ? resolveConfigValue(cfg.proxy.apiKey) : "";
+	if (apiKey) {
+		const headers = {
+			Authorization: `Bearer ${apiKey}`,
+			[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
+		};
+		for (const path of [PLUGIN_DISCOVERY_PATH, PLUGIN_DISCOVERY_PATH_LEGACY]) {
+			const viaPlugin = await tryDiscoverySource(
+				cfg,
+				new URL(path, origin).toString(),
+				headers,
+				"pi-bridge",
+			);
+			if (viaPlugin) return viaPlugin;
+		}
+	}
+
+	const legacy = discoveryUrl(cfg.proxy.endpoint);
+	return legacy ? tryDiscoverySource(cfg, legacy, {}, "well-known") : null;
+}
+
+async function tryDiscoverySource(
+	cfg: ProxyConfig,
+	url: string,
+	extraHeaders: Record<string, string>,
+	label: string,
+): Promise<Discovery | null> {
 	let resp: Response;
 	try {
 		resp = await fetchWithTimeout(url, {
-			headers: { "User-Agent": PLUGIN_USER_AGENT, Accept: "application/json" },
+			headers: {
+				...extraHeaders,
+				"User-Agent": PLUGIN_USER_AGENT,
+				Accept: "application/json",
+			},
 		});
 	} catch (err) {
-		log.warn(
-			"well-known fetch failed:",
-			(err as Error).message,
-			"— falling back to /v1/models",
-		);
+		log.debug(`${label} fetch failed:`, (err as Error).message);
 		return null;
 	}
 	if (!resp.ok) {
-		log.warn(`well-known returned ${resp.status} — falling back to /v1/models`);
+		log.debug(`${label} returned ${resp.status}`);
 		return null;
 	}
 	let body: any;
 	try {
 		body = await resp.json();
 	} catch {
-		log.warn("well-known returned non-JSON — falling back to /v1/models");
+		log.debug(`${label} returned non-JSON`);
 		return null;
 	}
 	if (!body || body.schemaVersion !== 1) {
-		log.warn("well-known schemaVersion != 1 — falling back to /v1/models");
+		log.debug(`${label} schemaVersion != 1`);
 		return null;
 	}
 
@@ -166,10 +236,14 @@ async function tryWellKnown(cfg: ProxyConfig): Promise<Discovery | null> {
 
 	return {
 		source: "well-known",
+		// The sidecar only ever filled lproxy.upstreamVersion, and with null at
+		// that; the bridge reports the real proxy version under upstream.
 		upstreamVersion:
 			typeof body?.upstream?.upstreamVersion === "string"
 				? body.upstream.upstreamVersion
-				: null,
+				: typeof body?.lproxy?.upstreamVersion === "string"
+					? body.lproxy.upstreamVersion
+					: null,
 		builtinProviders: builtin,
 		customPool,
 		serverDiscoveryExcludes: Array.isArray(body.discoveryExcludes)
@@ -190,10 +264,11 @@ async function fetchRawModels(
 	cfg: ProxyConfig,
 	resolvedKey: string,
 ): Promise<RawUpstreamModel[]> {
-	const url = new URL(
-		"/v1/models",
-		new URL(cfg.proxy.endpoint).origin,
-	).toString();
+	const origin = endpointOrigin(cfg.proxy.endpoint);
+	if (!origin) {
+		throw new Error(`proxy.endpoint is not a valid URL: ${cfg.proxy.endpoint}`);
+	}
+	const url = new URL("/v1/models", origin).toString();
 	const resp = await fetchWithTimeout(url, {
 		headers: {
 			Authorization: `Bearer ${resolvedKey}`,

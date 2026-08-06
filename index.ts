@@ -15,6 +15,8 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import fs from "node:fs";
+import path from "node:path";
 
 import { applyAll } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
@@ -24,8 +26,13 @@ import { detectConflicts } from "./src/conflicts.ts";
 import { fetchDiscovery } from "./src/fetch-models.ts";
 import type { ProxyConfig } from "./src/config.ts";
 import type { UsageDocument } from "./src/fetch-usage.ts";
-import { fetchUsage } from "./src/fetch-usage.ts";
-import { log } from "./src/log.ts";
+import {
+	fetchUsage,
+	lastUsageContract,
+	lastUsageSource,
+	PREFERRED_CONTRACT,
+} from "./src/fetch-usage.ts";
+import { log, setLogSink } from "./src/log.ts";
 import {
 	isUsageFresh,
 	readUsageCache,
@@ -41,6 +48,24 @@ const QUOTA_STATUS_KEY = "0quota";
 /** Minimum gap between network fetches triggered by turn_end, even if the
  * shared file cache is stale (prevents burst fetches during rapid turns). */
 const TURN_FETCH_DEBOUNCE_MS = 5_000;
+
+/** Guards the legacy-source warning so it appears once per session. */
+let legacyUsageWarned = false;
+
+/** Where an operator learns how to install or update the bridge plugin. */
+const BRIDGE_DOCS_URL = "https://github.com/abix5/pi-cliproxyapi#pi-bridge";
+
+/** Pi's taskflow children run in JSON/print mode and need providers only. */
+export function isHeadlessRun(argv = process.argv): boolean {
+	const modeIndex = argv.indexOf("--mode");
+	const mode = modeIndex >= 0 ? argv[modeIndex + 1] : undefined;
+	return (
+		mode === "json" ||
+		mode === "print" ||
+		argv.includes("-p") ||
+		argv.includes("--print")
+	);
+}
 
 /**
  * Fetch usage data through the shared file cache: if the on-disk cache is
@@ -75,6 +100,63 @@ async function loadUsageCached(
 	}
 }
 
+/**
+ * Refresh discovery over the network after the cached copy was applied.
+ *
+ * The extension handle captured at startup becomes invalid once pi replaces or
+ * reloads the session, so a slow refresh that finishes afterwards must not try
+ * to register providers with it. That case is expected, not an error.
+ */
+async function revalidateDiscovery(
+	pi: ExtensionAPI,
+	cfg: ProxyConfig,
+	resolvedKey: string,
+): Promise<void> {
+	try {
+		const fresh = await fetchDiscovery(cfg, resolvedKey);
+		await applyAll(pi, cfg, fresh);
+		log.debug("discovery revalidated from network");
+	} catch (e) {
+		const message = (e as Error).message ?? "";
+		if (message.includes("stale after session replacement")) {
+			log.debug("discovery revalidate skipped: session was replaced");
+			return;
+		}
+		log.warn("background discovery revalidate failed:", message);
+	}
+}
+
+/** Warn once per session when quota still comes from a pre-contract source, so
+ * a deprecated path is visible rather than silently permanent. */
+function warnIfLegacyUsageSource(ui: {
+	notify(message: string, level: "info" | "warning" | "error"): void;
+}): void {
+	if (legacyUsageWarned) return;
+	const source = lastUsageSource();
+	const contract = lastUsageContract();
+	if (source === null) return;
+
+	if (source === "sidecar") {
+		legacyUsageWarned = true;
+		ui.notify(
+			"quota is served by the legacy pi-cliproxyapi-wellknown sidecar. " +
+				"Install the pi-bridge plugin in CLIProxyAPI to use your normal API key " +
+				`and drop proxy.usageKey: ${BRIDGE_DOCS_URL}`,
+			"warning",
+		);
+		return;
+	}
+	if (contract !== null && contract < PREFERRED_CONTRACT) {
+		legacyUsageWarned = true;
+		ui.notify(
+			`the pi-bridge plugin answered with contract v${contract}; this extension ` +
+				`prefers v${PREFERRED_CONTRACT}. Quota still works, but update the plugin ` +
+				`in CLIProxyAPI for cache and account details: ${BRIDGE_DOCS_URL}`,
+			"warning",
+		);
+	}
+}
+
 /** Update the quota status segment for the current model. No-op if the model
  * has no quota windows (e.g. a custom provider) or if usage is unavailable. */
 async function refreshQuotaStatus(
@@ -93,10 +175,6 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	if (!resolvedUsageKey) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
-		return;
-	}
 	const doc = await loadUsageCached(cfg, resolvedUsageKey, opts);
 	if (!doc) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
@@ -106,8 +184,52 @@ async function refreshQuotaStatus(
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 
+/**
+ * True when THIS module is the globally-installed copy (its file lives under a
+ * `node_modules` tree), as opposed to a working-tree checkout.
+ */
+function isInstalledCopy(): boolean {
+	try {
+		return import.meta.url.includes("/node_modules/");
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * True when the current project is a dev checkout of this extension that loads
+ * its own working-tree source through `.pi/extensions/cliproxyapi.ts`.
+ */
+function localDevLoaderPresent(cwd: string): boolean {
+	try {
+		return (
+			fs.existsSync(path.join(cwd, ".pi", "extensions", "cliproxyapi.ts")) &&
+			fs.existsSync(path.join(cwd, "src", "fetch-usage.ts"))
+		);
+	} catch {
+		return false;
+	}
+}
+
 export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
-	registerCommands(pi);
+	// Mode guard: inside this extension's own checkout the project-local loader
+	// already supplies the working-tree source. If the published package is also
+	// installed globally, both copies would load in one process and register the
+	// same providers twice, so the installed copy stands down and the dev source
+	// wins.
+	if (isInstalledCopy() && localDevLoaderPresent(process.cwd())) {
+		return;
+	}
+
+	const headless = isHeadlessRun();
+	if (!headless) registerCommands(pi);
+
+	// Route later messages through pi's notification channel. Startup runs before
+	// any session exists, so those messages have no UI to reach and are kept off
+	// the terminal instead (see log.ts).
+	pi.on("session_start", (_event, ctx) => {
+		setLogSink(ctx.hasUI ? ctx.ui : null);
+	});
 
 	const cfg = loadConfig();
 	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
@@ -118,9 +240,11 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 
-	// Conflict scan is read-only and cheap; do it once at startup.
-	const conflicts = detectConflicts(cfg);
-	for (const c of conflicts) log.warn(`conflict (${c.kind}): ${c.detail}`);
+	// Conflict scanning only feeds the interactive diagnostics UI.
+	if (!headless) {
+		const conflicts = detectConflicts(cfg);
+		for (const c of conflicts) log.warn(`conflict (${c.kind}): ${c.detail}`);
+	}
 
 	try {
 		const cached = readDiscoveryCache();
@@ -132,18 +256,17 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 				`discovery from cache (age ${Math.round(cached.ageMs / 1000)}s): ${cached.discovery.builtinProviders.length} builtin, ${cached.discovery.customPool.length} custom`,
 			);
 			await applyAll(pi, cfg, cached.discovery);
-			void (async () => {
-				try {
-					const fresh = await fetchDiscovery(cfg, resolvedKey);
-					await applyAll(pi, cfg, fresh);
-					log.debug("discovery revalidated from network");
-				} catch (e) {
-					log.warn(
-						"background discovery revalidate failed:",
-						(e as Error).message,
-					);
-				}
-			})();
+			if (!headless) {
+				// Revalidate in the background, but bind the work to the session
+				// that started it: pi invalidates the extension handle when the
+				// session is replaced or reloaded, and using a captured handle
+				// afterwards throws.
+				void revalidateDiscovery(pi, cfg, resolvedKey);
+			}
+		} else if (headless) {
+			log.warn(
+				"discovery cache missing in headless run — no providers registered",
+			);
 		} else {
 			const discovery = await fetchDiscovery(cfg, resolvedKey);
 			await applyAll(pi, cfg, discovery);
@@ -153,7 +276,7 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 		// Commands stay registered; user can open /cliproxy and press r to refresh.
 	}
 
-	if (cfg.refreshIntervalMinutes > 0) {
+	if (!headless && cfg.refreshIntervalMinutes > 0) {
 		const ms = cfg.refreshIntervalMinutes * 60_000;
 		setInterval(() => {
 			void (async () => {
@@ -178,14 +301,19 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 	// model's provider only (anthropic→claude, openai→codex, custom→hidden).
 	// The shared file cache ensures multiple Pi instances don't fetch more than
 	// once every 2 minutes.
-	const resolvedUsageKey = resolveConfigValue(cfg.proxy.usageKey);
-	if (resolvedUsageKey) {
+	const resolvedUsageKey = headless
+		? ""
+		: resolveConfigValue(cfg.proxy.usageKey);
+	// Quota is available through the pi-bridge plugin (ordinary API key) or the
+	// legacy sidecar (separate usage key), so either credential enables it.
+	if (resolvedUsageKey || cfg.proxy.apiKey) {
 		let lastTurnFetchMs = 0;
 
 		// session_start: render immediately from cache (no fetch needed if fresh).
 		pi.on("session_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
 			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
+			warnIfLegacyUsageSource(ctx.ui);
 		});
 
 		// model_select: re-render for the new provider. Read from cache so the
