@@ -14,19 +14,69 @@
 
 Pi extension for corporate management of model providers via a single [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) endpoint.
 
-One `(endpoint, apiKey)` pair — every provider and model inherits it automatically.
+One `(endpoint, apiKey)` pair — every provider and model inherits it
+automatically, including live quota.
 
-![pi-cliproxyapi — the /cliproxy hub, Models tab](docs/pi-cliproxyapi-1.png)
+## Quota in the status line
+
+The footer shows how much of each provider window is left for the model you are
+currently using, so a limit is visible before it bites rather than after:
+
+```text
+claude-sonnet-5   󰘧 5h ⣶ 69 7d ⣷ 81
+claude-fable-5    󰘧 5h ⣶ 69 7d ⣷ 81 Fable ⣾ 91
+```
+
+Windows are read live, not guessed. Anthropic caps some models against a slice
+of the weekly pool — Fable may draw down half of it, and draws faster than other
+models — so that per-model window is shown **alongside** the weekly figure
+rather than folded into it. Switching models switches the window on display.
+Other models' windows never drag down the general figure.
+
+Green ≥ 70%, yellow 30–69%, red < 30%. The **Usage** tab breaks the same data
+down per account, with reset times.
+
+## How the numbers get here
+
+Quota and the model catalogue come from the
+**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin running
+inside CliProxyAPI, authenticated with the same `apiKey` used for model calls
+— no second credential, no extra container:
+
+```text
+Pi + extension  ──▶  CliProxyAPI
+                       /v1/models, /v1/chat/…          model calls
+                       /v0/resource/plugins/pi-bridge/
+                           well-known  →  model catalogue
+                           usage       →  per-account quota
+```
+
+The plugin caches quota server-side, so every Pi instance shares one upstream
+poll and provider rate limits stay comfortable. It also knows where each
+provider keeps its numbers — a description that lives in configuration, so a
+provider reshuffling its API is answered by an edit rather than a release.
+
+Without the plugin the extension still works: it falls back to raw `/v1/models`
+with local heuristics, and the quota display is simply absent.
+
+| | With pi-bridge | Without |
+| --- | --- | --- |
+| Quota in status line + Usage tab | Live per-account windows | Unavailable |
+| Model discovery | Enriched from [models.dev](https://models.dev) — real context windows, costs, reasoning flags | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0` |
+| Classification | Server-side | Local heuristics by `owned_by` |
+
+See the [plugin's README](https://github.com/abix5/pi-cliproxyapi-bridge) for
+installing it into CliProxyAPI.
 
 ## Features
 
+- **Live quota** — status-line windows for the model in use, per-account bars in the **Usage** tab, no LLM call
 - **Unified hub** — one `/cliproxy` overlay with **Models / Usage / Diagnostics** tabs (number hotkeys `1` `2` `3`) plus global actions: `r` refresh, `e` setup, `s` save
 - **Built-in provider routing** — whitelist which Anthropic / OpenAI / etc. models are available through the proxy
 - **Custom provider groups** — create named groups (e.g. `corp-glm`, `corp-gemini`) for proxy-only models with automatic metadata from [models.dev](https://models.dev)
 - **Exclusive model pool** — a model assigned to one group automatically disappears from others, grouped by `owned_by` with type-to-filter (`/`)
 - **Live save state** — the header shows `● unsaved` while you edit and `✓ settings saved` after `s`, no console noise
-- **Per-account usage tab** — colored quota bars, toggle disabled accounts, verbose errors — no LLM call
-- **Setup wizard** — `/cliproxy-setup` configures endpoint, API key, provider prefix, and usage key interactively
+- **Setup wizard** — `/cliproxy-setup` configures endpoint, API key, and provider prefix interactively
 
 ## Commands
 
@@ -35,7 +85,7 @@ Two commands; everything else lives inside the hub as tabs and actions.
 | Command | Description |
 | --- | --- |
 | `/cliproxy` | Hub overlay — **Models** / **Usage** / **Diagnostics** tabs plus global actions |
-| `/cliproxy-setup` | Configure endpoint, API key, provider prefix, usage key |
+| `/cliproxy-setup` | Configure endpoint, API key, provider prefix |
 
 ### The `/cliproxy` hub
 
@@ -53,25 +103,11 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 
 **Diagnostics tab** — connectivity, key resolution, and discovery shape.
 
-## Screenshots
-
-**Models — custom group, pool grouped by owner (`/` filters the pool)**
-
-![Models tab: custom proxy group with grouped available pool](docs/pi-cliproxyapi-2.png)
-
-**Usage — per-account quota windows**
-
-![Usage tab: per-account quota bars with reset windows](docs/pi-cliproxyapi-3.png)
-
-**Diagnostics — connectivity, keys, discovery shape**
-
-![Diagnostics tab: endpoint, key resolution, discovery and conflicts](docs/pi-cliproxyapi-4.png)
-
 ## Prerequisites
 
 You need a running [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance — this is the corporate LLM proxy that aggregates multiple providers behind a single OpenAI-compatible endpoint.
 
-For full functionality (Usage tab, enriched model metadata from [models.dev](https://models.dev)), also install the **[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin into that instance. See [Discovery](#discovery) below.
+For full functionality — quota windows and enriched model metadata — also install the **[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin into that instance. See [How the numbers get here](#how-the-numbers-get-here) above.
 
 ## Install
 
@@ -133,34 +169,6 @@ cache.
 ```
 
 Values support `!command` (shell exec), `$ENV_VAR`, or literal strings. The `/cliproxy-setup` wizard also accepts bare `~/path` values and saves them as `!cat` commands; when editing the file by hand, write the `!cat ~/path` form explicitly.
-
-## Discovery
-
-The extension reads the model catalogue and provider quota from the
-**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin running
-inside CliProxyAPI, authenticating with the same `apiKey` it uses for model
-calls. No second credential and no extra container are involved.
-
-```
-┌──────────────┐     ┌────────────────────────────────────────┐
-│  Pi + plugin │────▶│  CliProxyAPI                           │
-│              │     │  /v1/models, /v1/chat/...              │
-│              │     │  /v0/resource/plugins/pi-bridge/…      │
-│              │     │      well-known → model catalogue      │
-│              │     │      usage      → per-account quota    │
-└──────────────┘     └────────────────────────────────────────┘
-```
-
-Without the plugin the extension still works: it falls back to raw `/v1/models`
-with local heuristics.
-
-| | With pi-bridge | Without |
-| --- | --- | --- |
-| Model discovery | Enriched from [models.dev](https://models.dev) — real context windows, costs, reasoning flags | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0` |
-| Usage tab | Per-account quota bars | Unavailable |
-| Classification | Server-side | Local heuristics by `owned_by` |
-
-See the plugin's README for installing it into CliProxyAPI.
 
 ## Setup
 
