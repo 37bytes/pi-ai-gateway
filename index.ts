@@ -168,7 +168,7 @@ async function refreshQuotaStatus(
 		};
 		setStatus(key: string, text: string | undefined): void;
 	},
-	model: { provider: string } | undefined,
+	model: { provider: string; id?: string } | undefined,
 	opts: { readOnly?: boolean } = {},
 ): Promise<void> {
 	if (!model) {
@@ -180,7 +180,7 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const rendered = renderQuotaSegment(doc, model.provider, ui.theme);
+	const rendered = renderQuotaSegment(doc, model.provider, ui.theme, model.id);
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 

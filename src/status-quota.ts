@@ -58,6 +58,36 @@ function is7dGroup(g: UsageGroup): boolean {
 	return s.includes("7d") || s.includes("seven-day") || s.includes("seven day");
 }
 
+/**
+ * A model-scoped weekly window, e.g. `seven-day-fable`, as opposed to the
+ * account-wide `seven-day`.
+ */
+function scopedModelName(g: UsageGroup): string | null {
+	const id = g.id.toLowerCase();
+	const prefix = "seven-day-";
+	return id.startsWith(prefix) ? id.slice(prefix.length) || null : null;
+}
+
+/**
+ * Does a scoped window belong to the model currently selected?
+ *
+ * Windows are named after the model family (`Fable` -> `seven-day-fable`) while
+ * model ids carry a version (`claude-fable-5`), so this looks for the family
+ * name as a delimited word inside the id rather than comparing the two
+ * directly. Done without a regex because the scope comes from the server.
+ */
+function scopeMatchesModel(scope: string, modelID: string): boolean {
+	const isWordChar = (c: string | undefined) =>
+		c !== undefined && /[a-z0-9]/.test(c);
+	const id = modelID.toLowerCase();
+	for (let i = id.indexOf(scope); i !== -1; i = id.indexOf(scope, i + 1)) {
+		const before = id[i - 1];
+		const after = id[i + scope.length];
+		if (!isWordChar(before) && !isWordChar(after)) return true;
+	}
+	return false;
+}
+
 interface WindowAggregate {
 	fraction: number;
 }
@@ -66,10 +96,8 @@ interface WindowAggregate {
  * Aggregate a window period across live accounts.
  *
  * Semantics: within each account, take the MIN remaining among matching
- * windows (the account's bottleneck for that period — e.g. claude has both
- * a general "7d Weekly" and a model-specific "7d Sonnet" window; the tighter
- * one governs). Then take the MAX across accounts (the router will dispatch
- * to the account with the most headroom).
+ * windows (the account's bottleneck for that period). Then take the MAX across
+ * accounts (the router will dispatch to the account with the most headroom).
  */
 function aggregateWindow(
 	accounts: UsageAccount[],
@@ -124,6 +152,9 @@ function pct(fraction: number): number {
  * @param doc     - usage document from /api/usage
  * @param piProvider - Pi provider name of the current model (e.g. "anthropic")
  * @param theme   - Pi theme for coloring (from ctx.ui.theme)
+ * @param modelID - id of the selected model (e.g. "claude-fable-5"). When the
+ *   provider reports a weekly window scoped to that model, it is shown as its
+ *   own segment and excluded from the account-wide figure.
  */
 export function renderQuotaSegment(
 	doc: UsageDocument,
@@ -132,6 +163,7 @@ export function renderQuotaSegment(
 	theme: {
 		fg(color: "success" | "warning" | "error" | "dim", text: string): string;
 	},
+	modelID?: string,
 ): string | null {
 	const usageKey = providerToUsageKey(piProvider);
 	if (!usageKey) return null;
@@ -139,24 +171,56 @@ export function renderQuotaSegment(
 	const accounts = doc.accounts.filter((a) => a.provider === usageKey);
 	if (accounts.length === 0) return null;
 
-	const w5 = aggregateWindow(accounts, is5hGroup);
-	const w7 = aggregateWindow(accounts, is7dGroup);
+	// A weekly window scoped to the selected model, e.g. Fable. It is a sub-cap
+	// on the weekly pool rather than a separate allowance, so it is shown
+	// alongside the account-wide weekly figure, never instead of it.
+	const scopeOf = (g: UsageGroup) => (modelID ? scopedModelName(g) : null);
+	const isSelectedModelWindow = (g: UsageGroup) => {
+		const scope = scopeOf(g);
+		return scope !== null && scopeMatchesModel(scope, modelID as string);
+	};
 
-	// No 5h/7d windows found → hide the segment entirely
-	if (!w5 && !w7) return null;
+	const w5 = aggregateWindow(accounts, is5hGroup);
+	// Other models' scoped windows say nothing about the model in use, and
+	// including them used to drag the weekly figure down for no reason.
+	const w7 = aggregateWindow(
+		accounts,
+		(g) => is7dGroup(g) && scopeOf(g) === null,
+	);
+	const wModel = aggregateWindow(accounts, isSelectedModelWindow);
+
+	// Nothing to show → hide the segment entirely
+	if (!w5 && !w7 && !wModel) return null;
 
 	const parts: string[] = [theme.fg("dim", GAUGE_ICON)];
+	const push = (label: string, fraction: number) => {
+		const color = colorForFraction(fraction);
+		parts.push(
+			`${theme.fg("dim", label)} ${theme.fg(color, brailleFor(fraction))} ${theme.fg(color, String(pct(fraction)))}`,
+		);
+	};
 
-	if (w5) {
-		parts.push(
-			`${theme.fg("dim", "5h")} ${theme.fg(colorForFraction(w5.fraction), brailleFor(w5.fraction))} ${theme.fg(colorForFraction(w5.fraction), String(pct(w5.fraction)))}`,
-		);
-	}
-	if (w7) {
-		parts.push(
-			`${theme.fg("dim", "7d")} ${theme.fg(colorForFraction(w7.fraction), brailleFor(w7.fraction))} ${theme.fg(colorForFraction(w7.fraction), String(pct(w7.fraction)))}`,
-		);
-	}
+	if (w5) push("5h", w5.fraction);
+	if (w7) push("7d", w7.fraction);
+	if (wModel)
+		push(modelWindowLabel(accounts, modelID as string), wModel.fraction);
 
 	return parts.join(" ");
+}
+
+/**
+ * Label for the selected model's own weekly window, taken from the group so it
+ * reads the way the provider names it ("7d Fable" -> "Fable").
+ */
+function modelWindowLabel(accounts: UsageAccount[], modelID: string): string {
+	for (const a of accounts) {
+		for (const g of a.groups ?? []) {
+			const scope = scopedModelName(g);
+			if (scope && scopeMatchesModel(scope, modelID)) {
+				const label = (g.label ?? "").replace(/^7d\s+/i, "").trim();
+				return label || scope;
+			}
+		}
+	}
+	return "model";
 }
