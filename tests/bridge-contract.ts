@@ -147,7 +147,7 @@ try {
 			});
 		}
 		if (call.path === "/v0/resource/plugins/pi-bridge/usage") {
-			return json(usageDocument, 200, { "X-Pi-Contract": "2" });
+			return json({ ...usageDocument, unsupportedProviders: null }, 200, { "X-Pi-Contract": "2" });
 		}
 		throw new Error(`unexpected plugin usage request: ${call.path}`);
 	});

@@ -5,7 +5,7 @@
 //   - every custom group already declared in the user's config.
 
 import type { Api } from "@earendil-works/pi-ai";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai";
 
 import type { ProxyConfig } from "../config.ts";
 import type { CatalogIndex, ProviderEntry } from "./types.ts";
@@ -16,11 +16,9 @@ export function collectProviders(
 ): ProviderEntry[] {
 	const out: ProviderEntry[] = [];
 
-	const proxyProviderNames = new Set<string>(catalog.builtinModelIds.keys());
-	const knownPiAiProviders = new Set<string>(getProviders());
 	const builtinNames = new Set<string>([
-		...proxyProviderNames,
-		...knownPiAiProviders,
+		...catalog.builtinModelIds.keys(),
+		...Object.keys(cfg.builtinProviders),
 	]);
 
 	for (const name of Array.from(builtinNames).sort()) {

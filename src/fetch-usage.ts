@@ -119,6 +119,7 @@ function parseUsage(body: unknown, origin: string): UsageDocument {
 	if (!doc || doc.schemaVersion !== 1 || !Array.isArray(doc.accounts)) {
 		throw new Error(`${origin} returned unexpected payload shape`);
 	}
+	if (!Array.isArray(doc.unsupportedProviders)) doc.unsupportedProviders = [];
 	return doc;
 }
 
