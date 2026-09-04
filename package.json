@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3",
+	"version": "0.4.3-agp.1",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",

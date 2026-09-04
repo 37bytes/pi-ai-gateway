@@ -6,7 +6,7 @@ import type { Api } from "@earendil-works/pi-ai";
 
 import type { CustomProviderModelConfig } from "./config.ts";
 
-/** API families we know how to route through CliProxyAPI. */
+/** API families routed through AI Gateway Platform. */
 export const ALLOWED_APIS: ReadonlySet<Api> = new Set<Api>([
 	"openai-completions",
 	"openai-responses",

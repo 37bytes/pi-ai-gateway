@@ -40,7 +40,7 @@ interface WizardStep {
 const STEPS: WizardStep[] = [
 	{
 		label: "endpoint",
-		hint: "OpenAI-style base URL of your CliProxyAPI deployment, must include /v1",
+		hint: "AI Gateway Platform base URL, must include /v1",
 		required: true,
 		validate: (raw) => {
 			try {
@@ -54,7 +54,7 @@ const STEPS: WizardStep[] = [
 	},
 	{
 		label: "apiKey",
-		hint: "CliProxyAPI bearer key. Accepts literal, $ENV_VAR, !cmd, or ~/path",
+		hint: "AGP LLM bearer key. Accepts literal, $ENV_VAR, !cmd, or ~/path",
 		required: true,
 	},
 	{

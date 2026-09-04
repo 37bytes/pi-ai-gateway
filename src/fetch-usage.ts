@@ -2,10 +2,9 @@
 //
 // Quota comes from one of two sources:
 //
-//   - the pi-bridge plugin inside CLIProxyAPI, authenticated with the ordinary
-//     API key already used for model calls, or
-//   - the legacy standalone sidecar at /api/usage, authenticated with a
-//     separate usage key.
+//   - the AGP-native pi-bridge compatibility façade, authenticated with the
+//     ordinary API key already used for model calls, or
+//   - the upstream legacy standalone sidecar fallback.
 //
 // The plugin is preferred and probed first; the sidecar remains supported so a
 // server can be migrated without changing the client in lockstep. Results are
@@ -24,7 +23,7 @@ export const PREFERRED_CONTRACT = 2;
 /** Header the bridge reads to select a contract, and echoes back. */
 export const CONTRACT_HEADER = "X-Pi-Contract";
 
-/** Routes served by the pi-bridge plugin inside CLIProxyAPI. */
+/** Routes served by the AGP-native pi-bridge compatibility façade. */
 const PLUGIN_BASE = "/v0/resource/plugins/pi-bridge";
 const PLUGIN_USAGE_PATH = `${PLUGIN_BASE}/usage`;
 /** Path used while the plugin was in testing; kept for older deployments. */

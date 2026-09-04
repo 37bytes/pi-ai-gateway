@@ -2,10 +2,9 @@
 
 [![GitHub](https://img.shields.io/github/license/37bytes/pi-ai-gateway)](https://github.com/37bytes/pi-ai-gateway)
 
-Pi extension for **AI Gateway** model discovery, routing, and quota visibility.
-AI Gateway fronts a [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
-deployment with one endpoint and one API key; every provider and model inherits
-that connection automatically.
+Pi extension for **AI Gateway Platform** model discovery, routing, and quota
+visibility. One AGP endpoint and one ordinary LLM key configure every provider
+and model exposed to the caller.
 
 ## Quota in the status line
 
@@ -28,35 +27,28 @@ down per account, with reset times.
 
 ## How the numbers get here
 
-Quota and the model catalogue come from the
-**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin running
-inside AI Gateway, authenticated with the same `apiKey` used for model calls
-— no second credential, no extra container:
+AI Gateway Platform implements the current `pi-bridge` compatibility contract
+natively. The same ordinary LLM key authenticates inference, model discovery,
+and the key-scoped quota projection; no CPA plugin, management credential,
+second key, or companion container is required.
 
 ```text
-Pi + extension  ──▶  AI Gateway
+Pi + extension  ──▶  AI Gateway Platform
                        /v1/models, /v1/chat/…          model calls
                        /v0/resource/plugins/pi-bridge/
-                           well-known  →  model catalogue
-                           usage       →  per-account quota
+                           capabilities
+                           well-known  → model catalogue
+                           usage       → authorized quota windows
 ```
 
-The plugin caches quota server-side, so every Pi instance shares one upstream
-poll and provider rate limits stay comfortable. It also knows where each
-provider keeps its numbers — a description that lives in configuration, so a
-provider reshuffling its API is answered by an edit rather than a release.
+Without the compatibility surface the extension falls back to raw `/v1/models`
+with local heuristics, and the quota display is absent.
 
-Without the plugin the extension still works: it falls back to raw `/v1/models`
-with local heuristics, and the quota display is simply absent.
-
-| | With pi-bridge | Without |
+| | With AGP compatibility façade | Fallback |
 | --- | --- | --- |
-| Quota in status line + Usage tab | Live per-account windows | Unavailable |
-| Model discovery | Enriched from [models.dev](https://models.dev) — real context windows, costs, reasoning flags | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0` |
-| Classification | Server-side | Local heuristics by `owned_by` |
-
-See the [pi-bridge README](https://github.com/abix5/pi-cliproxyapi-bridge)
-for installing it into AI Gateway.
+| Quota in status line + Usage tab | Key-scoped persisted windows | Unavailable |
+| Model discovery | Grant-filtered AGP catalogue | `/v1/models` defaults |
+| Classification | Server-declared | Local `owned_by` heuristics |
 
 ## Features
 
@@ -95,19 +87,17 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 
 ## Prerequisites
 
-You need a running **AI Gateway** backed by
-[CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — the corporate
-LLM proxy that aggregates multiple providers behind a single OpenAI-compatible
-endpoint. For quota windows and enriched model metadata, also install
-**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** into it.
+You need an AI Gateway Platform endpoint with the OMP compatibility façade
+enabled and an ordinary AGP LLM key authorized for the required models.
 
 ## Install
 
 ```bash
-pi install npm:pi-ai-gateway
+pi install github:37bytes/pi-ai-gateway
 ```
 
-Then run `/cliproxy-setup` to configure your proxy endpoint.
+Then run `/cliproxy-setup` to configure the AGP endpoint. The legacy command
+name is intentionally retained so existing OMP workflows keep working.
 
 ### Taskflow child agents
 
@@ -173,7 +163,7 @@ Values support `!command` (shell exec), `$ENV_VAR`, or literal strings. The `/cl
 Run `/cliproxy-setup` in Pi and enter:
 
 - **endpoint** — your public proxy URL ending with `/v1`
-- **apiKey** — CliProxyAPI bearer key
+- **apiKey** — ordinary AI Gateway Platform LLM key
 - **providerPrefix** — short slug for custom provider names (e.g. `corp`)
 
 ## Migrating from the wellknown sidecar

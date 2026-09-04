@@ -104,7 +104,7 @@ function discoveryUrl(endpoint: string): string | null {
 	return origin ? new URL("/.well-known/pi", origin).toString() : null;
 }
 
-/** Model catalogue served by the pi-bridge plugin inside CLIProxyAPI. */
+/** Model catalogue served by the AGP-native pi-bridge compatibility façade. */
 const PLUGIN_DISCOVERY_PATH = "/v0/resource/plugins/pi-bridge/well-known";
 /** Path used while the plugin was in testing; kept for older deployments. */
 const PLUGIN_DISCOVERY_PATH_LEGACY =
