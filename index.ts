@@ -1,9 +1,9 @@
 /**
- * pi-cliproxyapi — Pi extension that manages model providers through a single
- * CliProxyAPI endpoint with one corporate key.
+ * AI Gateway — Pi extension that manages model providers through a single
+ * AI Gateway endpoint with one corporate key.
  *
  * On factory boot we:
- *   1. load ~/.pi/agent/pi-cliproxyapi/config.json (migrates legacy config; defaults if missing)
+ *   1. load ~/.pi/agent/ai-gateway/config.json (migrates upstream config; defaults if missing)
  *   2. fetch discovery (well-known → fall back to /v1/models)
  *   3. call pi.registerProvider for each enabled built-in + custom provider
  *   4. register slash commands /cliproxy and /cliproxy-setup
@@ -53,7 +53,7 @@ const TURN_FETCH_DEBOUNCE_MS = 5_000;
 let legacyUsageWarned = false;
 
 /** Where an operator learns how to install or update the bridge plugin. */
-const BRIDGE_DOCS_URL = "https://github.com/abix5/pi-cliproxyapi#pi-bridge";
+const BRIDGE_DOCS_URL = "https://github.com/abix5/pi-cliproxyapi-bridge#pi-bridge";
 
 /** Pi's taskflow children run in JSON/print mode and need providers only. */
 export function isHeadlessRun(argv = process.argv): boolean {
@@ -139,8 +139,8 @@ function warnIfLegacyUsageSource(ui: {
 	if (source === "sidecar") {
 		legacyUsageWarned = true;
 		ui.notify(
-			"quota is served by the legacy pi-cliproxyapi-wellknown sidecar. " +
-				"Install the pi-bridge plugin in CLIProxyAPI to use your normal API key " +
+			"quota is served by the legacy sidecar. Install the pi-bridge plugin " +
+				"in AI Gateway to use your normal API key " +
 				`and drop proxy.usageKey: ${BRIDGE_DOCS_URL}`,
 			"warning",
 		);
@@ -198,12 +198,12 @@ function isInstalledCopy(): boolean {
 
 /**
  * True when the current project is a dev checkout of this extension that loads
- * its own working-tree source through `.pi/extensions/cliproxyapi.ts`.
+ * its own working-tree source through `.pi/extensions/ai-gateway.ts`.
  */
 function localDevLoaderPresent(cwd: string): boolean {
 	try {
 		return (
-			fs.existsSync(path.join(cwd, ".pi", "extensions", "cliproxyapi.ts")) &&
+			fs.existsSync(path.join(cwd, ".pi", "extensions", "ai-gateway.ts")) &&
 			fs.existsSync(path.join(cwd, "src", "fetch-usage.ts"))
 		);
 	} catch {
@@ -211,7 +211,7 @@ function localDevLoaderPresent(cwd: string): boolean {
 	}
 }
 
-export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
+export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 	// Mode guard: inside this extension's own checkout the project-local loader
 	// already supplies the working-tree source. If the published package is also
 	// installed globally, both copies would load in one process and register the
@@ -222,14 +222,14 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 	}
 
 	const headless = isHeadlessRun();
-	if (!headless) registerCommands(pi);
-
-	// Route later messages through pi's notification channel. Startup runs before
-	// any session exists, so those messages have no UI to reach and are kept off
-	// the terminal instead (see log.ts).
-	pi.on("session_start", (_event, ctx) => {
-		setLogSink(ctx.hasUI ? ctx.ui : null);
-	});
+	if (!headless) {
+		registerCommands(pi);
+		// Route later messages through Pi's notification channel. Startup runs
+		// before any session exists, so messages remain off the terminal then.
+		pi.on("session_start", (_event, ctx) => {
+			setLogSink(ctx.hasUI ? ctx.ui : null);
+		});
+	}
 
 	const cfg = loadConfig();
 	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
@@ -305,8 +305,7 @@ export default async function cliproxyapi(pi: ExtensionAPI): Promise<void> {
 		? ""
 		: resolveConfigValue(cfg.proxy.usageKey);
 	// Quota is available through the pi-bridge plugin (ordinary API key) or the
-	// legacy sidecar (separate usage key), so either credential enables it.
-	if (resolvedUsageKey || cfg.proxy.apiKey) {
+	if (!headless && (resolvedUsageKey || cfg.proxy.apiKey)) {
 		let lastTurnFetchMs = 0;
 
 		// session_start: render immediately from cache (no fetch needed if fresh).

@@ -1,6 +1,6 @@
-# pi-cliproxyapi — dev / global mode toggle
+# AI Gateway — dev / global mode toggle
 #
-# dev    — load the LOCAL working-tree source via .pi/extensions/cliproxyapi.ts
+# dev    — load the LOCAL working-tree source via .pi/extensions/ai-gateway.ts
 #          (default). The globally-installed npm copy stands down here (see the
 #          mode guard in index.ts), so only your dev code runs.
 # global — disable the local loader so the globally-installed published package
@@ -8,8 +8,8 @@
 #
 # After switching, run /reload in pi (or restart pi) to apply.
 
-LOADER   := .pi/extensions/cliproxyapi.ts
-DISABLED := .pi/extensions/cliproxyapi.ts.disabled
+LOADER   := .pi/extensions/ai-gateway.ts
+DISABLED := .pi/extensions/ai-gateway.ts.disabled
 
 .PHONY: help dev global status check
 

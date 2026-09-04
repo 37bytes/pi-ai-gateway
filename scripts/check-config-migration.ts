@@ -12,11 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { isLocalCheckout, migrateLegacyConfig } from "../src/config.ts";
+import {
+	isLocalCheckout,
+	migrateLegacyConfig,
+	migrateUpstreamConfig,
+} from "../src/config.ts";
 import { setLogQuiet } from "../src/log.ts";
 
 setLogQuiet(true);
-const root = mkdtempSync(join(tmpdir(), "pi-cliproxyapi-migration-"));
+const root = mkdtempSync(join(tmpdir(), "pi-ai-gateway-migration-"));
 
 try {
 	assert.equal(isLocalCheckout(), true);
@@ -46,6 +50,21 @@ try {
 			);
 			assert.equal(existsSync(join(dirname(current), sidecar)), false);
 		}
+	}
+
+	for (const localCheckout of [true, false]) {
+		const upstream = join(root, String(localCheckout), "upstream", "config.json");
+		const current = join(root, String(localCheckout), "gateway", "config.json");
+		const config = Buffer.from('{\n  "proxy": {"apiKey": "$AI_GATEWAY_KEY"}\n}\n');
+		mkdirSync(dirname(upstream), { recursive: true });
+		writeFileSync(upstream, config);
+		chmodSync(upstream, 0o600);
+
+		migrateUpstreamConfig(upstream, current, localCheckout);
+
+		assert.deepEqual(readFileSync(current), config);
+		assert.equal(statSync(current).mode & 0o777, 0o600);
+		assert.equal(existsSync(upstream), localCheckout);
 	}
 
 	const legacy = join(root, "no-overwrite", "legacy", "config.json");

@@ -13,7 +13,7 @@
 
 import type { ProxyConfig } from "./config.ts";
 import { resolveConfigValue } from "./config.ts";
-import { PLUGIN_USER_AGENT } from "./fetch-models.ts";
+import { fetchBridgeCapabilities, PLUGIN_USER_AGENT } from "./bridge.ts";
 import { log } from "./log.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -193,10 +193,15 @@ async function fetchFromPlugin(
 		[CONTRACT_HEADER]: String(PREFERRED_CONTRACT),
 	};
 
-	let resp = await getJSON(
-		new URL(PLUGIN_USAGE_PATH, origin).toString(),
-		headers,
+	const capabilities = await fetchBridgeCapabilities(
+		origin,
+		apiKey,
+		PREFERRED_CONTRACT,
 	);
+	const usagePath = capabilities
+		? `${PLUGIN_BASE}${capabilities.usagePath}`
+		: PLUGIN_USAGE_PATH;
+	let resp = await getJSON(new URL(usagePath, origin).toString(), headers);
 	if (resp.status === 404) {
 		// Older bridge: only the testing path exists.
 		resp = await getJSON(

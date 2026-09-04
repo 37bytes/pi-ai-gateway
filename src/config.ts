@@ -1,13 +1,13 @@
-// ~/.pi/agent/pi-cliproxyapi/config.json — migrate, load, validate, persist.
+// ~/.pi/agent/ai-gateway/config.json — migrate, load, validate, persist.
 //
 // Schema:
 //
 //   {
 //     "proxy": {
 //       "endpoint": "https://your-proxy.example.com/v1",
-//       "apiKey":   "!cat ~/.pi/agent/pi-cliproxyapi/key",
+//       "apiKey":   "!cat ~/.pi/agent/ai-gateway/key",
 //       "providerPrefix": "myproxy",
-//       "usageKey": "!cat ~/.pi/agent/pi-cliproxyapi/usage-key"
+//       "usageKey": "!cat ~/.pi/agent/ai-gateway/usage-key"
 //     },
 //     "builtinProviders": {
 //       "openai":    { "enabled": true,  "apiOverride": null, "models": ["gpt-5.2"] },
@@ -46,8 +46,15 @@ import type { Api } from "@earendil-works/pi-ai";
 
 import { log } from "./log.ts";
 
-export const CONFIG_DIR = join(homedir(), ".pi", "agent", "pi-cliproxyapi");
+export const CONFIG_DIR = join(homedir(), ".pi", "agent", "ai-gateway");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+const UPSTREAM_CONFIG_PATH = join(
+	homedir(),
+	".pi",
+	"agent",
+	"pi-cliproxyapi",
+	"config.json",
+);
 const LEGACY_CONFIG_PATH = join(
 	homedir(),
 	".config",
@@ -61,23 +68,24 @@ export function isLocalCheckout(): boolean {
 	);
 }
 
-export function migrateLegacyConfig(
-	legacyPath = LEGACY_CONFIG_PATH,
-	configPath = CONFIG_PATH,
-	localCheckout = isLocalCheckout(),
+function migrateConfig(
+	sourcePath: string,
+	configPath: string,
+	localCheckout: boolean,
+	sourceName: string,
 ): void {
-	if (existsSync(configPath) || !existsSync(legacyPath)) return;
+	if (existsSync(configPath) || !existsSync(sourcePath)) return;
 	let temporaryPath: string | undefined;
 	try {
 		mkdirSync(dirname(configPath), { recursive: true });
 		temporaryPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
-		copyFileSync(legacyPath, temporaryPath, constants.COPYFILE_EXCL);
+		copyFileSync(sourcePath, temporaryPath, constants.COPYFILE_EXCL);
 		linkSync(temporaryPath, configPath);
 		rmSync(temporaryPath);
 		temporaryPath = undefined;
-		if (!localCheckout) unlinkSync(legacyPath);
+		if (!localCheckout) unlinkSync(sourcePath);
 		log.info(
-			localCheckout ? "legacy config copied to" : "legacy config moved to",
+			localCheckout ? `${sourceName} config copied to` : `${sourceName} config moved to`,
 			configPath,
 		);
 	} catch (err) {
@@ -88,8 +96,26 @@ export function migrateLegacyConfig(
 				log.warn("failed to clean temporary config:", cleanupErr);
 			}
 		}
-		log.warn("failed to migrate legacy config:", err);
+		log.warn(`failed to migrate ${sourceName} config:`, err);
 	}
+}
+
+/** Migrate the v0.4.3 upstream config into AI Gateway's namespace. */
+export function migrateUpstreamConfig(
+	sourcePath = UPSTREAM_CONFIG_PATH,
+	configPath = CONFIG_PATH,
+	localCheckout = isLocalCheckout(),
+): void {
+	migrateConfig(sourcePath, configPath, localCheckout, "upstream");
+}
+
+/** Migrate the pre-v0.4.0 config location, preserving upstream behavior. */
+export function migrateLegacyConfig(
+	legacyPath = LEGACY_CONFIG_PATH,
+	configPath = CONFIG_PATH,
+	localCheckout = isLocalCheckout(),
+): void {
+	migrateConfig(legacyPath, configPath, localCheckout, "legacy");
 }
 
 export interface BuiltinProviderConfig {
@@ -147,6 +173,7 @@ const DEFAULT_CONFIG: ProxyConfig = {
 };
 
 export function loadConfig(): ProxyConfig {
+	migrateUpstreamConfig();
 	migrateLegacyConfig();
 	if (!existsSync(CONFIG_PATH)) {
 		log.info("config not found, using defaults at", CONFIG_PATH);

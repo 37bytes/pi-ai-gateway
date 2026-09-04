@@ -1,12 +1,12 @@
 {
-	"name": "pi-cliproxyapi",
+	"name": "pi-ai-gateway",
 	"version": "0.4.3",
 	"type": "module",
-	"description": "Pi extension for corporate management of model providers via a single CliProxyAPI endpoint",
+	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/abix5/pi-cliproxyapi.git"
+		"url": "git+https://github.com/37bytes/pi-ai-gateway.git"
 	},
 	"files": [
 		"index.ts",
@@ -21,12 +21,14 @@
 	"keywords": [
 		"pi-package",
 		"pi-extension",
-		"cliproxyapi"
+		"ai-gateway"
 	],
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts",
-		"check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts"
+		"check:contract": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/bridge-contract.ts",
+		"check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts",
+		"test": "npm run check:migration && npm run check:contract && npm run check:child"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",

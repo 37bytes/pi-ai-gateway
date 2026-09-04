@@ -6,7 +6,7 @@
 // pi renders as a proper [Warning]/[Error] line; the rest are dropped unless
 // debugging is explicitly enabled.
 
-const TAG = "[pi-cliproxyapi]";
+const TAG = "[ai-gateway]";
 
 type Level = "info" | "warning" | "error";
 
@@ -34,7 +34,7 @@ export function setLogSink(next: NotifySink | null): void {
 
 /** Explicit opt-in for verbose terminal output when diagnosing a live session. */
 function verbose(): boolean {
-	return !!process.env.PI_CLIPROXYAPI_DEBUG;
+	return !!process.env.PI_AI_GATEWAY_DEBUG;
 }
 
 function format(args: unknown[]): string {

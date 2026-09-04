@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const home = mkdtempSync(join(tmpdir(), "pi-cliproxyapi-child-"));
+const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-child-"));
 const originalHome = process.env.HOME;
 const originalArgv = [...process.argv];
 const originalFetch = globalThis.fetch;
@@ -19,7 +19,7 @@ try {
 		"--no-session",
 	);
 
-	const configDir = join(home, ".pi", "agent", "pi-cliproxyapi");
+	const configDir = join(home, ".pi", "agent", "ai-gateway");
 	mkdirSync(configDir, { recursive: true });
 	writeFileSync(
 		join(configDir, "config.json"),
@@ -66,14 +66,14 @@ try {
 		throw new Error("headless child must not fetch");
 	}) as typeof fetch;
 
-	const { default: cliproxyapi, isHeadlessRun } = await import("../index.ts");
+	const { default: aiGateway, isHeadlessRun } = await import("../index.ts");
 	assert.equal(isHeadlessRun(), true);
 	assert.equal(isHeadlessRun(["pi"]), false);
 
 	const providers: string[] = [];
 	const commands: string[] = [];
 	const events: string[] = [];
-	await cliproxyapi({
+	await aiGateway({
 		registerProvider(name: string) {
 			providers.push(name);
 		},
@@ -83,7 +83,7 @@ try {
 		on(name: string) {
 			events.push(name);
 		},
-	} as unknown as Parameters<typeof cliproxyapi>[0]);
+	} as unknown as Parameters<typeof aiGateway>[0]);
 
 	assert.deepEqual(providers, ["openai"]);
 	assert.deepEqual(commands, []);

@@ -1,5 +1,5 @@
 // First-run setup wizard: collects endpoint + apiKey + providerPrefix
-// and writes them to ~/.pi/agent/pi-cliproxyapi/config.json.
+// and writes them to ~/.pi/agent/ai-gateway/config.json.
 //
 // All three fields support the same "!cmd" / "$ENV" / literal semantics as
 // the rest of the config (see resolveConfigValue). For convenience the wizard

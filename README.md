@@ -1,21 +1,11 @@
-```
-██████╗ ██╗     ██████╗██╗     ██╗██████╗ ██████╗  ██████╗ ██╗  ██╗██╗   ██╗
-██╔══██╗██║    ██╔════╝██║     ██║██╔══██╗██╔══██╗██╔═══██╗╚██╗██╔╝╚██╗ ██╔╝
-██████╔╝██║    ██║     ██║     ██║██████╔╝██████╔╝██║   ██║ ╚███╔╝  ╚████╔╝
-██╔═══╝ ██║    ██║     ██║     ██║██╔═══╝ ██╔══██╗██║   ██║ ██╔██╗   ╚██╔╝
-██║     ██║    ╚██████╗███████╗██║██║     ██║  ██║╚██████╔╝██╔╝ ██╗   ██║
-╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝   ╚═╝
-```
+# AI Gateway
 
-# pi-cliproxyapi
+[![GitHub](https://img.shields.io/github/license/37bytes/pi-ai-gateway)](https://github.com/37bytes/pi-ai-gateway)
 
-[![npm](https://img.shields.io/npm/v/pi-cliproxyapi)](https://www.npmjs.com/package/pi-cliproxyapi)
-[![GitHub](https://img.shields.io/github/license/abix5/pi-cliproxyapi)](https://github.com/abix5/pi-cliproxyapi)
-
-Pi extension for corporate management of model providers via a single [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) endpoint.
-
-One `(endpoint, apiKey)` pair — every provider and model inherits it
-automatically, including live quota.
+Pi extension for **AI Gateway** model discovery, routing, and quota visibility.
+AI Gateway fronts a [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+deployment with one endpoint and one API key; every provider and model inherits
+that connection automatically.
 
 ## Quota in the status line
 
@@ -40,11 +30,11 @@ down per account, with reset times.
 
 Quota and the model catalogue come from the
 **[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin running
-inside CliProxyAPI, authenticated with the same `apiKey` used for model calls
+inside AI Gateway, authenticated with the same `apiKey` used for model calls
 — no second credential, no extra container:
 
 ```text
-Pi + extension  ──▶  CliProxyAPI
+Pi + extension  ──▶  AI Gateway
                        /v1/models, /v1/chat/…          model calls
                        /v0/resource/plugins/pi-bridge/
                            well-known  →  model catalogue
@@ -65,8 +55,8 @@ with local heuristics, and the quota display is simply absent.
 | Model discovery | Enriched from [models.dev](https://models.dev) — real context windows, costs, reasoning flags | Defaults: `contextWindow=128k`, `maxTokens=16k`, `cost=0` |
 | Classification | Server-side | Local heuristics by `owned_by` |
 
-See the [plugin's README](https://github.com/abix5/pi-cliproxyapi-bridge) for
-installing it into CliProxyAPI.
+See the [pi-bridge README](https://github.com/abix5/pi-cliproxyapi-bridge)
+for installing it into AI Gateway.
 
 ## Features
 
@@ -105,14 +95,16 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 
 ## Prerequisites
 
-You need a running [CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) instance — this is the corporate LLM proxy that aggregates multiple providers behind a single OpenAI-compatible endpoint.
-
-For full functionality — quota windows and enriched model metadata — also install the **[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** plugin into that instance. See [How the numbers get here](#how-the-numbers-get-here) above.
+You need a running **AI Gateway** backed by
+[CliProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — the corporate
+LLM proxy that aggregates multiple providers behind a single OpenAI-compatible
+endpoint. For quota windows and enriched model metadata, also install
+**[pi-bridge](https://github.com/abix5/pi-cliproxyapi-bridge)** into it.
 
 ## Install
 
 ```bash
-pi install npm:pi-cliproxyapi
+pi install npm:pi-ai-gateway
 ```
 
 Then run `/cliproxy-setup` to configure your proxy endpoint.
@@ -129,7 +121,7 @@ For a normal npm installation:
     "piChild": {
       "resourceProfile": "allowlist",
       "extensions": [
-        "/Users/your-user/.pi/agent/npm/node_modules/pi-cliproxyapi/index.ts"
+        "/Users/your-user/.pi/agent/npm/node_modules/pi-ai-gateway/index.ts"
       ]
     }
   }
@@ -146,13 +138,19 @@ cache.
 
 ## Config
 
-`~/.pi/agent/pi-cliproxyapi/config.json` — created by `/cliproxy-setup`, editable by hand. If only the legacy `~/.config/pi-cliproxyapi/config.json` exists, an installed plugin moves it here once; a local checkout copies it and retains the legacy file.
+`~/.pi/agent/ai-gateway/config.json` — created by `/cliproxy-setup`, editable
+by hand. On first run, AI Gateway imports
+`~/.pi/agent/pi-cliproxyapi/config.json` from the upstream v0.4.3 package. An
+installed package moves that source config; a local checkout copies it. If the
+upstream config does not exist, the older
+`~/.config/pi-cliproxyapi/config.json` location is migrated with the same
+copy-versus-move behavior.
 
 ```jsonc
 {
   "proxy": {
     "endpoint": "https://proxy.example.com/v1",
-    "apiKey": "!cat ~/.pi/agent/pi-cliproxyapi/key",
+    "apiKey": "!cat ~/.pi/agent/ai-gateway/key",
     "providerPrefix": "corp"
   },
   "builtinProviders": {
@@ -181,26 +179,24 @@ Run `/cliproxy-setup` in Pi and enter:
 ## Migrating from the wellknown sidecar
 
 Earlier versions read `/.well-known/pi` and `/api/usage` from a separate
-`pi-cliproxyapi-wellknown` container, which needed its own `usageKey`. Version
-0.4.0 reads both from the pi-bridge plugin instead.
+sidecar, which needed its own `usageKey`. AI Gateway prefers the pi-bridge
+plugin and its ordinary model API key, while retaining the upstream fallbacks.
 
-1. Install pi-bridge into CliProxyAPI (see its README).
-2. Update this extension to 0.4.0 or later.
+1. Install pi-bridge into AI Gateway (see its README).
+2. Install or update this extension.
 3. Confirm the Usage tab still populates — it now says `source=plugin`.
-4. Drop the sidecar's routes from your reverse proxy, then stop the container.
-5. Remove `proxy.usageKey` from the config above; it is no longer read by the
-   setup wizard and is only consulted as a fallback.
+4. Remove the sidecar's routes from your reverse proxy, then stop the container.
+5. Remove `proxy.usageKey` from the config; it is only a fallback.
 
-Steps 1–2 are safe in either order: until the plugin answers, the extension
-keeps using the sidecar, and a version older than 0.4.0 keeps working against a
-server that already runs the plugin.
+The order is safe: until pi-bridge answers, AI Gateway keeps using the legacy
+sidecar, and `/v1/models` remains the discovery fallback.
 
 ## Layout
 
 ```
 index.ts            ExtensionFactory entry point
 src/
-  config.ts         ~/.pi/agent/pi-cliproxyapi/config.json
+  config.ts         ~/.pi/agent/ai-gateway/config.json
   commands.ts       2 slash commands (hub + setup)
   apply.ts          pi.registerProvider calls
   fetch-models.ts   catalogue from pi-bridge, /v1/models fallback

@@ -1,6 +1,6 @@
 // Discovery:
-//   1. GET <host>/.well-known/pi with User-Agent: pi-cliproxyapi/<ver>
-//      → returns the server contract document (see PLAN.md).
+//   1. GET <host>/.well-known/pi with User-Agent: pi-ai-gateway/<ver>
+//      → returns the server contract document.
 //   2. On 404 / 5xx / non-JSON / network error → fall back to:
 //      GET <endpoint>/v1/models with Authorization: Bearer <apiKey>
 //      → classify locally via compat.ts.
@@ -17,7 +17,7 @@ import {
 	normalizeSuggestedProvider,
 	reasoningFromId,
 } from "./compat.ts";
-import { readFileSync } from "node:fs";
+import { PLUGIN_USER_AGENT } from "./bridge.ts";
 
 import { writeDiscoveryCache } from "./cache.ts";
 import type { ProxyConfig } from "./config.ts";
@@ -25,17 +25,6 @@ import { resolveConfigValue } from "./config.ts";
 import { CONTRACT_HEADER, PREFERRED_CONTRACT } from "./fetch-usage.ts";
 import { log } from "./log.ts";
 
-/** Extension version, read from the manifest so there is one source of truth. */
-export const PLUGIN_VERSION: string = (() => {
-	try {
-		const manifest = new URL("../package.json", import.meta.url);
-		return JSON.parse(readFileSync(manifest, "utf8")).version ?? "unknown";
-	} catch {
-		return "unknown";
-	}
-})();
-
-export const PLUGIN_USER_AGENT = `pi-cliproxyapi/${PLUGIN_VERSION}`;
 const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface DiscoveryModelEntry {

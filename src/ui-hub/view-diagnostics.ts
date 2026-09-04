@@ -8,7 +8,7 @@ import type { ProxyConfig } from "../config.ts";
 import { resolveConfigValue } from "../config.ts";
 import { detectConflicts } from "../conflicts.ts";
 import type { Discovery } from "../fetch-models.ts";
-import { PLUGIN_USER_AGENT } from "../fetch-models.ts";
+import { PLUGIN_USER_AGENT } from "../bridge.ts";
 import { pad } from "../ui-picker/render-text.ts";
 import type { Theme } from "../ui-picker/types.ts";
 import { clampOffset, takeSlice } from "./shell.ts";
