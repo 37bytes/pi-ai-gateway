@@ -143,6 +143,7 @@ copy-versus-move behavior.
     "apiKey": "!cat ~/.pi/agent/ai-gateway/key",
     "providerPrefix": "corp"
   },
+  "registerAll": true, // optional — see below
   "builtinProviders": {
     "anthropic": { "enabled": true, "models": ["claude-opus-4-7"] },
     "openai": { "enabled": true, "models": ["gpt-5.2"] }
@@ -157,6 +158,22 @@ copy-versus-move behavior.
 ```
 
 Values support `!command` (shell exec), `$ENV_VAR`, or literal strings. The `/cliproxy-setup` wizard also accepts bare `~/path` values and saves them as `!cat` commands; when editing the file by hand, write the `!cat ~/path` form explicitly.
+
+### `registerAll` — every model the gateway reports
+
+Default `false` (explicit allowlists above decide what is registered). Set it
+to `true` to register **every** provider and model the gateway serves on each
+refresh:
+
+- every built-in provider (e.g. `openai` → all `codex/*`/`cx/*` models) with
+  all of its models, and
+- every custom-pool group as its own provider (grouped by the gateway's
+  suggested provider name, slugified — `ChatGPT Web` → `chatgpt-web`).
+
+New models and groups the gateway adds later appear automatically without a
+config edit. While `registerAll` is on, `builtinProviders`/`customProviders`
+lists are ignored (keep them if you want a quick switch back to manual mode).
+The Models tab in `/cliproxy` shows a read-only summary in this mode.
 
 ## Setup
 

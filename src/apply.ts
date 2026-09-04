@@ -10,7 +10,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { ALLOWED_APIS, baseUrlFor, modelDefaults } from "./compat.ts";
-import type { CustomProviderModelConfig, ProxyConfig } from "./config.ts";
+import type {
+	BuiltinProviderConfig,
+	CustomProviderConfig,
+	CustomProviderModelConfig,
+	ProxyConfig,
+} from "./config.ts";
 import { resolveConfigValue } from "./config.ts";
 import type { Discovery, DiscoveryCustomEntry } from "./fetch-models.ts";
 import { discoveryToIdSet } from "./fetch-models.ts";
@@ -35,6 +40,42 @@ export async function applyAll(
 		);
 		return report;
 	}
+
+	// -------- registerAll mode: derive the allowlists from discovery.
+	// Builtin providers get every model the gateway reports for them; every
+	// custom-pool group becomes its own provider (named after its suggested
+	// slug). Explicit builtinProviders/customProviders config is ignored so
+	// models the gateway adds later show up without a config edit. The passed
+	// config is left untouched — only this apply run expands it.
+	let effCfg = cfg;
+	if (cfg.registerAll) {
+		const allBuiltin: Record<string, BuiltinProviderConfig> = {};
+		for (const p of discovery.builtinProviders) {
+			allBuiltin[p.name] = {
+				enabled: true,
+				models: p.models.map((m) => m.id),
+			};
+		}
+
+		const allCustom: Record<string, CustomProviderConfig> = {};
+		for (const m of discovery.customPool) {
+			const slug = registerAllSlug(m.suggestedProvider);
+			const group = (allCustom[slug] ??= {
+				api: m.api,
+				models: [],
+			});
+			group.models.push({ id: m.id });
+		}
+		effCfg = {
+			...cfg,
+			builtinProviders: allBuiltin,
+			customProviders: allCustom,
+		};
+		log.info(
+			`registerAll: builtin ${Object.keys(allBuiltin).length}, custom groups ${Object.keys(allCustom).length}`,
+		);
+	}
+	cfg = effCfg;
 
 	// -------- builtin providers (anthropic, openai, etc.)
 	const builtinByName = new Map<
@@ -281,4 +322,18 @@ function pickNum(...vals: Array<number | undefined>): number | undefined {
 function pickBool(...vals: Array<boolean | undefined>): boolean | undefined {
 	for (const v of vals) if (typeof v === "boolean") return v;
 	return undefined;
+}
+
+/**
+ * Provider slug for a custom-pool group in registerAll mode. The gateway's
+ * suggested provider names are display-oriented ("ChatGPT Web"), so lowercase
+ * and fold anything that is not a slug character into hyphens.
+ */
+export function registerAllSlug(suggested: string): string {
+	const slug = suggested
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return slug || "pool";
 }

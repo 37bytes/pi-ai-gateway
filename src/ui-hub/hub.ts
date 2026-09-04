@@ -134,13 +134,27 @@ export function buildHub(
 		const keyOk = Boolean(resolveConfigValue(cfg.proxy.apiKey));
 		let provCount = 0;
 		let modelCount = 0;
-		for (const p of Object.values(cfg.builtinProviders)) {
-			if (p.enabled && p.models.length > 0) provCount++;
-			modelCount += p.models.length;
-		}
-		for (const p of Object.values(cfg.customProviders)) {
-			if (p.models.length > 0) provCount++;
-			modelCount += p.models.length;
+		if (cfg.registerAll) {
+			// Every discovery provider/model is registered automatically.
+			provCount = discovery.builtinProviders.length;
+			modelCount = discovery.builtinProviders.reduce(
+				(n, p) => n + p.models.length,
+				0,
+			);
+			const groups = new Set(
+				discovery.customPool.map((m) => m.suggestedProvider),
+			);
+			provCount += groups.size;
+			modelCount += discovery.customPool.length;
+		} else {
+			for (const p of Object.values(cfg.builtinProviders)) {
+				if (p.enabled && p.models.length > 0) provCount++;
+				modelCount += p.models.length;
+			}
+			for (const p of Object.values(cfg.customProviders)) {
+				if (p.models.length > 0) provCount++;
+				modelCount += p.models.length;
+			}
 		}
 		const state = flash
 			? flash

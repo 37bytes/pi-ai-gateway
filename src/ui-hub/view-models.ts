@@ -142,6 +142,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	};
 
 	const onActivate = async (): Promise<void> => {
+		if (cfg.registerAll) return; // nothing to attach/detach manually
 		if (focus === "providers") {
 			if (providerCursor === providers.length) {
 				const name = await promptNewProviderName(ctx, cfg.proxy.providerPrefix);
@@ -181,6 +182,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	};
 
 	const onDelete = async (): Promise<void> => {
+		if (cfg.registerAll) return; // providers come from discovery
 		if (focus !== "providers") return;
 		const prov = selectedProvider();
 		if (!prov || prov.kind !== "custom") return;
@@ -203,6 +205,36 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 
 	function renderBody(width: number, height: number): string[] {
 		const inner = Math.max(70, width);
+		if (cfg.registerAll) {
+			// registerAll registers every discovery provider/model automatically —
+			// there is no manual allowlist to edit here.
+			const d = deps.getDiscovery();
+			const dim = (s: string) => theme.fg("dim", s);
+			const lines: string[] = [];
+			lines.push(
+				theme.fg(
+					"success",
+					"registerAll \u2713 every gateway provider/model is registered",
+				),
+			);
+			for (const p of d.builtinProviders) {
+				lines.push(
+					`  ${pad(p.name, 18)} ${p.models.length} models \u00b7 ${p.api}`,
+				);
+			}
+			const groups = new Map<string, number>();
+			for (const m of d.customPool) {
+				groups.set(m.suggestedProvider, (groups.get(m.suggestedProvider) ?? 0) + 1);
+			}
+			for (const [slug, n] of [...groups.entries()].sort()) {
+				lines.push(`  ${pad(slug, 18)} ${n} models \u00b7 custom pool`);
+			}
+			lines.push(
+				dim("disable registerAll in config.json to edit the allowlist manually"),
+			);
+			for (let i = lines.length; i < height; i++) lines.push("");
+			return lines.slice(0, height).map((l) => pad(l, width));
+		}
 		const leftW = Math.min(56, Math.max(34, Math.floor(inner * 0.4)));
 		const rightW = inner - leftW - 1; // -1 for the vertical splitter
 		const bodyH = Math.max(8, height);
@@ -417,6 +449,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 
 	// ----- input ------------------------------------------------------------
 	function handleInput(data: string): boolean | Promise<boolean> {
+		if (cfg.registerAll) return false; // read-only summary; no editor keys
 		// Filter editing captures text first.
 		if (filterEditing) {
 			if (matchesKey(data, "escape")) {
@@ -499,6 +532,8 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	}
 
 	function footerHint(): string {
+		if (cfg.registerAll)
+			return " all models registered from discovery \u00b7 edit config.json to change ";
 		if (filterEditing)
 			return " type to filter \u00b7 \u21b5 apply \u00b7 esc clear ";
 		return " tab \u2194 panel \u00b7 \u2191\u2193 nav \u00b7 \u21b5 move \u00b7 / filter \u00b7 d remove group ";

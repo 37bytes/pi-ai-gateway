@@ -28,7 +28,8 @@
 		"check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts",
 		"check:contract": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/bridge-contract.ts",
 		"check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:child"
+		"check:register-all": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/register-all.ts",
+		"test": "npm run check:migration && npm run check:contract && npm run check:child && npm run check:register-all"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",

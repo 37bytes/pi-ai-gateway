@@ -19,6 +19,9 @@
 //         "models": [{ "id": "glm-4.7", "name": "GLM 4.7", "contextWindow": 128000, "maxTokens": 16000, "reasoning": true }]
 //       }
 //     },
+//     "registerAll": true,   // optional: register EVERY provider/model the gateway reports
+//                            // (builtin providers + every custom pool group); when on,
+//                            // builtinProviders/customProviders lists are ignored
 //     "discoveryExcludes": ["*:*"],
 //     "overrides": {},
 //     "refreshIntervalMinutes": 0,
@@ -153,6 +156,14 @@ export interface ProxyConfig {
 	};
 	builtinProviders: Record<string, BuiltinProviderConfig>;
 	customProviders: Record<string, CustomProviderConfig>;
+	/**
+	 * Register mode. When true, every provider and model the gateway reports in
+	 * discovery is registered with OMP: each builtin provider (openai, anthropic,
+	 * …) with ALL of its models, and every custom-pool group as its own provider.
+	 * The explicit builtinProviders/customProviders allowlists are ignored while
+	 * this is on — new models the gateway adds appear automatically.
+	 */
+	registerAll: boolean;
 	discoveryExcludes: string[];
 	overrides: Record<string, Partial<CustomProviderModelConfig>>;
 	refreshIntervalMinutes: number;
@@ -166,6 +177,7 @@ const DEFAULT_CONFIG: ProxyConfig = {
 	},
 	builtinProviders: {},
 	customProviders: {},
+	registerAll: false,
 	discoveryExcludes: ["*:*"],
 	overrides: {},
 	refreshIntervalMinutes: 0,
@@ -226,6 +238,7 @@ function normalizeConfig(raw: unknown): ProxyConfig {
 			CustomProviderConfig
 		>;
 	}
+	if (typeof r.registerAll === "boolean") merged.registerAll = r.registerAll;
 	if (Array.isArray(r.discoveryExcludes)) {
 		merged.discoveryExcludes = r.discoveryExcludes.filter(
 			(x): x is string => typeof x === "string",
