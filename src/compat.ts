@@ -57,16 +57,7 @@ export function reasoningFromId(id: string): boolean {
 	return REASONING_RX.some((rx) => rx.test(id));
 }
 
-/** owned_by → (suggested provider slug, default api). */
-const SUGGESTED_GROUPS: Array<[Set<string>, string, Api]> = [
-	[new Set(["zai"]), "glm", "openai-completions"],
-	[new Set(["Mistral"]), "mistral", "openai-completions"],
-	[new Set(["google", "antigravity"]), "gemini", "openai-completions"],
-	[new Set(["Ollama", "Ollama pay"]), "ollama", "openai-completions"],
-	[new Set(["Xiaomi"]), "mimo", "openai-completions"],
-	[new Set(["OpenRouter"]), "openrouter", "openai-completions"],
-	[new Set(["cerebras"]), "cerebras", "openai-completions"],
-];
+/** Provider namespaces come from discovery; never rename cloud providers. */
 
 export function withProviderPrefix(
 	prefix: string | undefined,
@@ -76,33 +67,12 @@ export function withProviderPrefix(
 	return p ? `${p}-${suffix}` : suffix;
 }
 
-/**
- * Server may suggest names with a legacy prefix.
- * Re-map them to the user's chosen prefix; if the user hasn't set one, drop
- * the legacy prefix entirely so we never surface our private namespace.
- */
-export function normalizeSuggestedProvider(
-	suggestedProvider: string,
-	prefix: string | undefined,
-): string {
-	const p = (prefix ?? "").trim();
-	const m = suggestedProvider.match(/^([a-z0-9]+-)(.*)$/);
-	if (m) return p ? `${p}-${m[1]}` : m[1]!;
-	return suggestedProvider;
+export function normalizeSuggestedProvider(suggestedProvider: string, prefix: string | undefined): string {
+	return withProviderPrefix(prefix, suggestedProvider.trim());
 }
 
-export function classifyCustom(
-	ownedBy: string,
-	prefix?: string,
-): { slug: string; api: Api } {
-	for (const [owners, suffix, api] of SUGGESTED_GROUPS) {
-		if (owners.has(ownedBy))
-			return { slug: withProviderPrefix(prefix, suffix), api };
-	}
-	return {
-		slug: withProviderPrefix(prefix, "misc"),
-		api: "openai-completions",
-	};
+export function classifyCustom(ownedBy: string, prefix?: string): { slug: string; api: Api } {
+	return { slug: withProviderPrefix(prefix, ownedBy.trim() || "misc"), api: "openai-completions" };
 }
 
 /** Make a friendly display name from an id like "glm-4.7" → "Glm 4.7". */

@@ -29,6 +29,11 @@ const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface DiscoveryModelEntry {
 	id: string;
+	/** Local selector differs from id (the exact gateway wire route). */
+	selectorId?: string;
+	providerId?: string;
+	canonicalModel?: string;
+	metadataState?: string;
 	name: string;
 	reasoning: boolean;
 	contextWindow: number;
@@ -70,6 +75,11 @@ export interface Discovery {
 interface RawUpstreamModel {
 	id: string;
 	owned_by: string;
+	providerId?: string;
+	selectorId?: string;
+	suggestedProviderName?: string;
+	canonicalModel?: string;
+	api?: Api;
 }
 
 // --------------------------------------------------------------------------- HTTP
@@ -206,6 +216,10 @@ async function tryDiscoverySource(
 	).map(
 		(m: any): DiscoveryCustomEntry => ({
 			id: String(m.id),
+			selectorId: typeof m.selectorId === "string" ? m.selectorId : undefined,
+			providerId: typeof m.providerId === "string" ? m.providerId : undefined,
+			canonicalModel: typeof m.canonicalModel === "string" ? m.canonicalModel : undefined,
+			metadataState: typeof m.metadataState === "string" ? m.metadataState : undefined,
 			name: typeof m.name === "string" ? m.name : String(m.id),
 			reasoning: Boolean(m.reasoning ?? reasoningFromId(String(m.id))),
 			contextWindow:
@@ -269,11 +283,16 @@ async function fetchRawModels(
 		throw new Error(`/v1/models returned ${resp.status}`);
 	}
 	const body = (await resp.json()) as {
-		data?: Array<{ id?: unknown; owned_by?: unknown }>;
+		data?: RawUpstreamModel[];
 	};
 	if (!body?.data || !Array.isArray(body.data)) return [];
 	return body.data
 		.map((m) => ({
+			providerId: m.providerId,
+			selectorId: m.selectorId,
+			suggestedProviderName: m.suggestedProviderName,
+			canonicalModel: m.canonicalModel,
+			api: m.api,
 			id: typeof m.id === "string" ? m.id : "",
 			owned_by: typeof m.owned_by === "string" ? m.owned_by : "",
 		}))
@@ -289,6 +308,12 @@ function classifyLocally(raw: RawUpstreamModel[], cfg: ProxyConfig): Discovery {
 	for (const m of raw) {
 		upstreamTotal++;
 		if (isExcluded(m.id, excludes)) continue;
+		if (m.providerId) {
+			if (!m.id.includes("/") || !m.selectorId || !m.suggestedProviderName || !m.api) continue;
+			const base = entryToDiscovery(modelDefaults(m.selectorId));
+			customPool.push({ ...base, id: m.id, selectorId: m.selectorId, providerId: m.providerId, canonicalModel: m.canonicalModel, metadataState: "unknown", api: m.api, suggestedProvider: normalizeSuggestedProvider(m.suggestedProviderName, cfg.proxy.providerPrefix), ownedBy: m.owned_by });
+			continue;
+		}
 
 		if (m.owned_by === "openai") {
 			const entry = modelDefaults(m.id);

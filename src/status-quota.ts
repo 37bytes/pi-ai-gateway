@@ -3,11 +3,7 @@
 // Format:  <gauge-icon> <braille-5h><braille-7d> <5h%>/<7d%>
 // Example: 󰐧 ⣷⣤ 83/23   (claude: 5h=83% green, 7d=23% yellow)
 //
-// Context-aware: only the windows of the CURRENT model's provider are shown.
-// Provider mapping (Pi provider → usage-API provider):
-//   anthropic → claude   (5h Session / 7d Weekly)
-//   openai    → codex    (5h Window / 7d Window)
-//   custom    → (hidden, no quota windows)
+// Context-aware: the caller supplies the exact discovery namespace used by usage.
 //
 // Aggregation: MAX remaining fraction across live accounts (not disabled,
 // not unavailable) for each 5h/7d window label.
@@ -25,15 +21,6 @@ const GAUGE_ICON = "\u{F0627}";
 /** Braille fill chars, 8 levels (empty → full). */
 const BRAILLE = ["⡀", "⠂", "⣀", "⣄", "⣤", "⣶", "⣷", "⣾"];
 
-/**
- * Map a Pi provider name to the provider key used by the usage API.
- * Returns null for providers without quota windows (custom providers).
- */
-export function providerToUsageKey(piProvider: string): string | null {
-	if (piProvider === "anthropic") return "claude";
-	if (piProvider === "openai") return "codex";
-	return null;
-}
 
 /** Is an account "live" — usable and contributing quota? */
 function isLiveAccount(a: UsageAccount): boolean {
@@ -150,7 +137,7 @@ function pct(fraction: number): number {
  * provider has no quota windows (segment should be hidden).
  *
  * @param doc     - usage document from /api/usage
- * @param piProvider - Pi provider name of the current model (e.g. "anthropic")
+ * @param piProvider - exact provider namespace from gateway discovery
  * @param theme   - Pi theme for coloring (from ctx.ui.theme)
  * @param modelID - id of the selected model (e.g. "claude-fable-5"). When the
  *   provider reports a weekly window scoped to that model, it is shown as its
@@ -165,10 +152,7 @@ export function renderQuotaSegment(
 	},
 	modelID?: string,
 ): string | null {
-	const usageKey = providerToUsageKey(piProvider);
-	if (!usageKey) return null;
-
-	const accounts = doc.accounts.filter((a) => a.provider === usageKey);
+	const accounts = doc.accounts.filter((a) => a.provider === piProvider);
 	if (accounts.length === 0) return null;
 
 	// A weekly window scoped to the selected model, e.g. Fable. It is a sub-cap

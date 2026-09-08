@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
 
-import { applyAll } from "./src/apply.ts";
+import { applyAll, registerAllSlug } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
 import { registerCommands } from "./src/commands.ts";
 import { loadConfig, resolveConfigValue } from "./src/config.ts";
@@ -157,8 +157,7 @@ function warnIfLegacyUsageSource(ui: {
 	}
 }
 
-/** Update the quota status segment for the current model. No-op if the model
- * has no quota windows (e.g. a custom provider) or if usage is unavailable. */
+/** Update quota for the exact gateway namespace of the selected model. */
 async function refreshQuotaStatus(
 	cfg: ProxyConfig,
 	resolvedUsageKey: string,
@@ -180,7 +179,13 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const rendered = renderQuotaSegment(doc, model.provider, ui.theme, model.id);
+	const discovery = readDiscoveryCache()?.discovery;
+	const entry = discovery?.customPool.find((candidate) =>
+		(candidate.selectorId || candidate.id) === model.id &&
+		(cfg.registerAll ? registerAllSlug(candidate.suggestedProvider) === model.provider : cfg.customProviders[model.provider]?.models.some((configured) => configured.id === candidate.id)),
+	);
+	const usageProvider = entry?.providerId ? entry.id.split("/")[0]! : entry?.ownedBy || model.provider;
+	const rendered = renderQuotaSegment(doc, usageProvider, ui.theme, model.id);
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 

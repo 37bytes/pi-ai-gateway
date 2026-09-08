@@ -2,7 +2,7 @@
 // pi.registerProvider for each enabled builtin + each custom provider.
 
 import type { Api } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai";
+import { getModels, getApiProvider } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ProviderConfig,
@@ -64,6 +64,7 @@ export async function applyAll(
 				api: m.api,
 				models: [],
 			});
+			if (group.api !== m.api) throw new Error(`Conflicting API families for provider ${slug}`);
 			group.models.push({ id: m.id });
 		}
 		effCfg = {
@@ -258,14 +259,23 @@ export async function applyAll(
 			});
 			continue;
 		}
+		const selectorRoutes = new Map<string, string>();
+		const transport = getApiProvider(c.api);
+		if (!transport) throw new Error(`No streaming transport for ${c.api}`);
+		const bridgeAPI = `agp:${name}:${c.api}`;
 		const modelDefs: ProviderModelConfig[] = present.map((m) => {
 			const fromPool = proxyCustomById.get(m.id);
-			const base = modelDefaults(m.id);
+			if (fromPool && fromPool.api !== c.api) throw new Error(`Model ${m.id} requires ${fromPool.api}, not ${c.api}`);
+			const selector = fromPool?.selectorId || m.id;
+			if (fromPool?.providerId && (!m.id.includes("/") || !fromPool.selectorId)) throw new Error(`Invalid gateway route: ${m.id}`);
+			if (selectorRoutes.has(selector)) throw new Error(`Ambiguous selector ${name}/${selector}`);
+			selectorRoutes.set(selector, m.id);
+			const base = modelDefaults(selector);
 			const ov = cfg.overrides[m.id] ?? {};
 			return {
-				id: m.id,
-				name: m.name ?? fromPool?.name ?? base.name ?? m.id,
-				api: c.api,
+				id: selector,
+				name: m.name ?? fromPool?.name ?? base.name ?? selector,
+				api: bridgeAPI,
 				reasoning:
 					pickBool(
 						m.reasoning,
@@ -298,7 +308,19 @@ export async function applyAll(
 			baseUrl: baseUrlFor(c.api, cfg.proxy.endpoint),
 			apiKey: resolvedKey,
 			authHeader: true,
-			api: c.api,
+			api: bridgeAPI,
+			streamSimple(model, context, options) {
+				const wireID = selectorRoutes.get(model.id);
+				if (!wireID) throw new Error(`Unknown gateway selector ${name}/${model.id}`);
+				return transport.streamSimple({ ...model, api: c.api }, context, {
+					...options,
+					onPayload: async (payload, sdkModel) => {
+						const next = await options?.onPayload?.(payload, sdkModel) ?? payload;
+						if (!next || typeof next !== "object" || Array.isArray(next)) throw new Error("Invalid gateway inference payload");
+						return { ...next, model: wireID };
+					},
+				});
+			},
 			models: modelDefs,
 		};
 		pi.registerProvider(name, providerConfig);
