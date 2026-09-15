@@ -71,33 +71,34 @@ export function isHeadlessRun(argv = process.argv): boolean {
 /**
  * Fetch usage data through the shared file cache: if the on-disk cache is
  * fresh (within TTL), return it without any network call; otherwise acquire
- * a cross-process lock and fetch at most once. Returns the best available
- * doc (possibly stale) or null on failure.
+ * a cross-process lock and fetch at most once. The result carries local cache
+ * staleness separately from unchanged server observation/cache provenance.
  */
 async function loadUsageCached(
 	cfg: ProxyConfig,
 	resolvedUsageKey: string,
 	opts: { readOnly?: boolean } = {},
-): Promise<UsageDocument | null> {
+): Promise<{ doc: UsageDocument; stale: boolean } | null> {
 	const apiKey = resolveConfigValue(cfg.proxy.apiKey);
 	const scope = cacheScope(cfg.proxy.endpoint, apiKey, PREFERRED_CONTRACT, resolvedUsageKey);
 	const cached = readUsageCache(scope);
-	if (cached && isUsageFresh(cached.ageMs)) return cached.doc;
+	const fallback = cached ? { doc: cached.doc, stale: !isUsageFresh(cached.ageMs) } : null;
+	if (fallback && !fallback.stale) return fallback;
 	// readOnly mode (debounce path): never fetch, serve stale cache if available.
-	if (opts.readOnly) return cached?.doc ?? null;
+	if (opts.readOnly) return fallback;
 	// Stale or missing — try to become the fetcher.
 	const token = tryAcquireUsageLock();
 	if (!token) {
 		// Another instance is fetching; serve stale data if we have it.
-		return cached?.doc ?? null;
+		return fallback;
 	}
 	try {
 		const doc = await fetchUsage(cfg, resolvedUsageKey, { force: true, resolvedApiKey: apiKey });
 		writeUsageCache(doc, scope);
-		return doc;
+		return { doc, stale: false };
 	} catch (e) {
 		log.debug("usage fetch failed in shared cache:", (e as Error).message);
-		return cached?.doc ?? null;
+		return fallback;
 	} finally {
 		releaseUsageLock(token);
 	}
@@ -180,8 +181,8 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const doc = await loadUsageCached(cfg, resolvedUsageKey, opts);
-	if (!doc) {
+	const usage = await loadUsageCached(cfg, resolvedUsageKey, opts);
+	if (!usage) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
@@ -197,11 +198,11 @@ async function refreshQuotaStatus(
 	) ?? discovery.builtinProviders.find((provider) => provider.name === model.provider)?.models.find((candidate) =>
 		(candidate.selectorId ?? candidate.id) === model.id && current.builtinProviders[model.provider]?.models.includes(candidate.id),
 	);
-	const rendered = entry ? renderQuotaSegment(doc, {
+	const rendered = entry ? renderQuotaSegment(usage.doc, {
 		providerId: entry.providerId,
 		providerKind: entry.providerKind,
 		modelIds: [entry.id, entry.wireId, entry.selectorId, entry.canonicalModel].filter((id): id is string => !!id),
-	}, ui.theme, model.id) : null;
+	}, ui.theme, model.id, { localStale: usage.stale }) : null;
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 

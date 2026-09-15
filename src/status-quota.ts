@@ -22,6 +22,11 @@ export interface QuotaBinding {
 	modelIds?: string[];
 }
 
+export interface QuotaRenderOptions {
+	/** Expired client cache used because refresh failed, was deferred, or was locked. */
+	localStale?: boolean;
+}
+
 export function quotaAccounts(doc: UsageDocument, binding: QuotaBinding): UsageAccount[] {
 	return doc.accounts.filter((account) =>
 		account.scope === "provider_subscription" && (binding.providerId
@@ -30,8 +35,14 @@ export function quotaAccounts(doc: UsageDocument, binding: QuotaBinding): UsageA
 	);
 }
 
-function isUsableGroup(group: UsageGroup): group is UsageGroup & { remainingFraction: number } {
+function isResetExpired(group: UsageGroup, now: number): boolean {
+	const resetAt = typeof group.resetTime === "string" ? Date.parse(group.resetTime) : NaN;
+	return Number.isFinite(resetAt) && resetAt <= now;
+}
+
+function isUsableGroup(group: UsageGroup, now: number, aggregateStale: boolean): group is UsageGroup & { remainingFraction: number } {
 	return group.scope !== "key_entitlement" && (group.state === undefined || group.state === "supported") &&
+		(!aggregateStale || group.state === "supported") && !isResetExpired(group, now) &&
 		typeof group.remainingFraction === "number" && Number.isFinite(group.remainingFraction);
 }
 
@@ -110,13 +121,15 @@ interface WindowAggregate {
 function aggregateWindow(
 	accounts: UsageAccount[],
 	predicate: (g: UsageGroup) => boolean,
+	now: number,
+	aggregateStale: boolean,
 ): WindowAggregate | null {
 	let maxAcross = -1;
 	for (const a of accounts) {
 		if (!isLiveAccount(a)) continue;
 		let minWithin = Infinity;
 		for (const g of a.groups ?? []) {
-			if (predicate(g) && isUsableGroup(g)) {
+			if (predicate(g) && isUsableGroup(g, now, aggregateStale)) {
 				if (g.remainingFraction < minWithin) minWithin = g.remainingFraction;
 			}
 		}
@@ -172,15 +185,22 @@ export function renderQuotaSegment(
 		fg(color: "success" | "warning" | "error" | "dim", text: string): string;
 	},
 	modelID?: string,
+	opts: QuotaRenderOptions = {},
 ): string | null {
 	const accounts = quotaAccounts(doc, binding);
 	if (accounts.length === 0) return null;
-	if (doc.cache?.stale || accounts.every((a) => a.stale || a.status === "stale" || a.state === "stale")) return theme.fg("dim", "quota stale");
+	const now = Date.now();
+	const aggregateStale = doc.cache?.stale === true;
+	// Native AGP cache.stale summarizes every observation, not this model or
+	// the HTTP transport. Legacy kind-only documents lack that explicit contract.
+	if (opts.localStale || (aggregateStale && !binding.providerId)) return theme.fg("dim", "quota stale");
 	const selectedIds = new Set([modelID, ...(binding.modelIds ?? [])].filter((id): id is string => !!id));
 	const explicitModels = (g: UsageGroup) => g.models?.length ? g.models : g.model ? [g.model] : [];
 	const matchesSelection = (g: UsageGroup) => {
 		const ids = explicitModels(g);
-		return !ids.length || ids.some((id) => selectedIds.has(id));
+		if (ids.length) return ids.some((id) => selectedIds.has(id));
+		const scope = scopedModelName(g);
+		return scope === null || (!!modelID && scopeMatchesModel(scope, modelID));
 	};
 
 	// A weekly window scoped to the selected model, e.g. Fable. It is a sub-cap
@@ -192,14 +212,16 @@ export function renderQuotaSegment(
 		return !!modelID && scope !== null && scopeMatchesModel(scope, modelID);
 	};
 
-	const w5 = aggregateWindow(accounts, (g) => is5hGroup(g) && matchesSelection(g));
+	const w5 = aggregateWindow(accounts, (g) => is5hGroup(g) && matchesSelection(g), now, aggregateStale);
 	// Other models' scoped windows say nothing about the model in use, and
 	// including them used to drag the weekly figure down for no reason.
 	const w7 = aggregateWindow(
 		accounts,
 		(g) => is7dGroup(g) && scopedModelName(g) === null && !explicitModels(g).length,
+		now,
+		aggregateStale,
 	);
-	const wModel = aggregateWindow(accounts, isSelectedModelWindow);
+	const wModel = aggregateWindow(accounts, isSelectedModelWindow, now, aggregateStale);
 	// Other server-defined periods (monthly, subscription, daily, etc.) retain
 	// their own labels. A known capacity must not disappear just because it is
 	// not a 5h/7d window, and unlike periods must never be added together.
@@ -207,20 +229,25 @@ export function renderQuotaSegment(
 	for (const account of accounts) {
 		if (!isLiveAccount(account)) continue;
 		for (const group of account.groups ?? []) {
-			if (isUsableGroup(group) && matchesSelection(group) && !is5hGroup(group) && !is7dGroup(group)) {
+			if (isUsableGroup(group, now, aggregateStale) && matchesSelection(group) && !is5hGroup(group) && !is7dGroup(group)) {
 				genericLabels.set(group.id, group.label?.trim() || group.id);
 			}
 		}
 	}
 	const genericWindows: Array<{ label: string; fraction: number }> = [];
 	for (const [id, label] of genericLabels) {
-		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group));
+		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group), now, aggregateStale);
 		if (aggregate) genericWindows.push({ label, fraction: aggregate.fraction });
 	}
 
 	// An authorized subscription without a fresh measurement is not zero quota.
 	if (!w5 && !w7 && !wModel && genericWindows.length === 0) {
-		const stale = accounts.some((a) => a.stale || a.status === "stale" || a.state === "stale" || a.groups?.some((g) => g.state === "stale" && matchesSelection(g)));
+		const stale = accounts.some((account) => {
+			const accountStale = account.stale || account.status === "stale" || account.state === "stale";
+			if (!account.groups?.length) return accountStale;
+			return account.groups.some((group) => matchesSelection(group) &&
+				(accountStale || group.state === "stale" || isResetExpired(group, now) || (aggregateStale && group.state === undefined)));
+		});
 		return theme.fg("dim", stale ? "quota stale" : accounts.some((a) => a.supported) ? "quota unknown" : "quota unsupported");
 	}
 
@@ -235,7 +262,7 @@ export function renderQuotaSegment(
 	if (w5) push("5h", w5.fraction);
 	if (w7) push("7d", w7.fraction);
 	if (wModel) {
-		const group = accounts.flatMap((a) => isLiveAccount(a) ? a.groups ?? [] : []).find((g) => isUsableGroup(g) && isSelectedModelWindow(g));
+		const group = accounts.flatMap((a) => isLiveAccount(a) ? a.groups ?? [] : []).find((g) => isUsableGroup(g, now, aggregateStale) && isSelectedModelWindow(g));
 		push(group?.label?.replace(/^7d\s+/i, "").trim() || "model", wModel.fraction);
 	}
 	for (const window of genericWindows) push(window.label, window.fraction);

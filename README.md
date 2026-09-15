@@ -32,6 +32,11 @@ accounts), not a promise about the affinity-selected account or a personal
 entitlement. Different periods and model-specific windows are never summed.
 Monthly, subscription, and other server-defined windows retain their actual
 labels and independent percentages; they are not relabeled as 5h or 7d.
+Native quota freshness is evaluated for the selected connector and model:
+a stale observation for another provider/model does not hide fresh capacity.
+Expired client-cache fallbacks and passed valid reset timestamps are marked
+stale; invalid or missing reset timestamps are not guessed. Legacy quota without
+explicit window states still honors the server's whole-document stale hint.
 
 ## How the numbers get here
 

@@ -76,7 +76,7 @@ export function readUsageCache(scope: string): CachedUsage | null {
 
 /** Is the cached data fresh enough to skip a network fetch? */
 export function isUsageFresh(ageMs: number): boolean {
-	return ageMs < USAGE_CACHE_TTL_MS;
+	return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < USAGE_CACHE_TTL_MS;
 }
 
 /** Write fresh usage data + timestamp to the shared cache file. */

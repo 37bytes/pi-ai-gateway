@@ -138,13 +138,16 @@ function accountStatus(a: UsageAccount): string {
 }
 
 function formatGroup(g: UsageGroup): string {
+	const now = Date.now();
+	const resetAt = typeof g.resetTime === "string" ? Date.parse(g.resetTime) : NaN;
+	const resetExpired = Number.isFinite(resetAt) && resetAt <= now;
 	const reset = g.resetTime
-		? `  ${C.dim}reset ${humanizeReset(g.resetTime)}${C.reset}`
+		? `  ${C.dim}reset ${humanizeReset(g.resetTime, resetAt, now)}${C.reset}`
 		: "";
 	const label = truncate(g.label || g.id, MAX_LABEL_WIDTH).padEnd(MAX_LABEL_WIDTH, " ");
 	const captured = g.capturedAt ? `  ${C.dim}captured ${g.capturedAt}${C.reset}` : "";
-	if (g.state === "stale" || g.state === "unknown" || typeof g.remainingFraction !== "number" || !Number.isFinite(g.remainingFraction)) {
-		return `    ${C.dim}${g.state || "unknown"}${C.reset}  ${label}${reset}${captured}`;
+	if (resetExpired || g.state === "stale" || g.state === "unknown" || typeof g.remainingFraction !== "number" || !Number.isFinite(g.remainingFraction)) {
+		return `    ${C.dim}${resetExpired ? "stale" : g.state || "unknown"}${C.reset}  ${label}${reset}${captured}`;
 	}
 	const f = clamp(g.remainingFraction);
 	const pct = Math.round(f * 100);
@@ -172,10 +175,9 @@ function colorForFraction(f: number): string {
 	return C.red;
 }
 
-function humanizeReset(iso: string): string {
-	const t = Date.parse(iso);
-	if (!Number.isFinite(t)) return iso;
-	const ms = t - Date.now();
+function humanizeReset(iso: string, resetAt: number, now: number): string {
+	if (!Number.isFinite(resetAt)) return iso;
+	const ms = resetAt - now;
 	if (ms <= 0) return "now";
 	const min = Math.round(ms / 60_000);
 	if (min < 60) return `${min}m`;

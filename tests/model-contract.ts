@@ -80,7 +80,7 @@ function account(providerId: string, remainingFraction: number): UsageAccount {
 		provider: "codex", providerId, scope: "provider_subscription", account: `opaque-${providerId}`,
 		authIndex: `opaque-${providerId}`, label: "Subscription", status: "active", disabled: false,
 		unavailable: false, success: 0, failed: 0, lastRequestAt: null, supported: true,
-		groups: [{ id: "five-hour", label: "5h", state: "supported", remainingFraction, resetTime: "2026-09-15T17:00:00Z", capturedAt: "2026-09-15T12:00:00Z" }],
+		groups: [{ id: "five-hour", label: "5h", state: "supported", remainingFraction, resetTime: new Date(Date.now() + 3_600_000).toISOString(), capturedAt: new Date().toISOString() }],
 	};
 }
 

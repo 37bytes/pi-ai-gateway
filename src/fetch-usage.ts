@@ -73,7 +73,7 @@ export interface UsageDocument {
 	generatedAt: string;
 	accounts: UsageAccount[];
 	unsupportedProviders: string[];
-	/** Contract v2 only: server-side cache provenance. */
+	/** Native AGP stale summarizes all observations; client transport age is separate. Legacy documents may use it as a whole-document hint. */
 	cache?: { updatedAt: string; stale: boolean; ttlMs: number };
 	/** Contract v2 only: which key the server authenticated. */
 	client?: { keyHint: string };
