@@ -37,26 +37,6 @@ export function isExcluded(id: string, patterns: string[]): boolean {
 	return false;
 }
 
-/** Defaults used when the catalog has nothing on a model id. */
-export const DEFAULT_CONTEXT_WINDOW = 128_000;
-export const DEFAULT_MAX_TOKENS = 16_000;
-export const DEFAULT_COST = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-};
-
-const REASONING_RX: RegExp[] = [
-	/.*-thinking$/,
-	/^gpt-5(\.\d+)?(-.*)?$/,
-	/^gemini-3(\.\d+)?(-.*)?$/,
-];
-
-export function reasoningFromId(id: string): boolean {
-	return REASONING_RX.some((rx) => rx.test(id));
-}
-
 /** Provider namespaces come from discovery; never rename cloud providers. */
 
 export function withProviderPrefix(
@@ -85,14 +65,7 @@ export function prettifyName(id: string): string {
 		.join(" ");
 }
 
-/** Build a CustomProviderModelConfig from a raw upstream model id + metadata. */
+/** Presentation hints only: unknown capacity and prices remain absent. */
 export function modelDefaults(id: string): CustomProviderModelConfig {
-	return {
-		id,
-		name: prettifyName(id),
-		contextWindow: DEFAULT_CONTEXT_WINDOW,
-		maxTokens: DEFAULT_MAX_TOKENS,
-		reasoning: reasoningFromId(id),
-		cost: { ...DEFAULT_COST },
-	};
+	return { id, name: prettifyName(id) };
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cacheScope } from "../src/cache-scope.ts";
 
 const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-child-"));
 const originalHome = process.env.HOME;
@@ -34,6 +35,7 @@ try {
 		join(configDir, "discovery-cache.json"),
 		JSON.stringify({
 			savedAt: Date.now(),
+			scope: cacheScope("https://proxy.test/v1", "test-key", 2),
 			discovery: {
 				source: "well-known",
 				upstreamVersion: null,
@@ -46,6 +48,8 @@ try {
 								id: "gpt-test",
 								name: "GPT test",
 								reasoning: false,
+								metadataState: "catalog",
+								priceState: "known",
 								contextWindow: 128_000,
 								maxTokens: 16_000,
 								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

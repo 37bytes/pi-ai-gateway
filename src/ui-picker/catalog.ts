@@ -19,9 +19,6 @@ export function buildCatalog(discovery: Discovery): CatalogIndex {
 				subtitle: m.name && m.name !== m.id ? m.name : undefined,
 				ownedBy: p.name,
 				reasoning: m.reasoning,
-				contextWindow: m.contextWindow,
-				maxTokens: m.maxTokens,
-				cost: m.cost,
 			});
 			ids.push(m.id);
 		}
@@ -40,9 +37,6 @@ export function buildCatalog(discovery: Discovery): CatalogIndex {
 				origin: m.suggestedProvider,
 				ownedBy: m.ownedBy,
 				reasoning: m.reasoning,
-				contextWindow: m.contextWindow,
-				maxTokens: m.maxTokens,
-				cost: m.cost,
 			});
 		}
 		customPoolIds.push(m.id);

@@ -14,6 +14,7 @@ import type { ProxyConfig } from "./config.ts";
 import { resolveConfigValue } from "./config.ts";
 import { fetchBridgeCapabilities, PLUGIN_USER_AGENT } from "./bridge.ts";
 import { log } from "./log.ts";
+import { cacheScope } from "./cache-scope.ts";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -36,13 +37,23 @@ export type UsageSource = "plugin" | "sidecar";
 export interface UsageGroup {
 	id: string;
 	label: string;
-	remainingFraction: number;
-	resetTime: string | null;
+	remainingFraction?: number | null;
+	resetTime?: string | null;
 	models?: string[];
+	scope?: "provider_subscription" | "key_entitlement";
+	state?: string;
+	model?: string;
+	capturedAt?: string | null;
+	confidence?: string;
 }
 
 export interface UsageAccount {
 	provider: string;
+	providerId?: string;
+	scope?: "provider_subscription" | "key_entitlement";
+	state?: string;
+	capturedAt?: string | null;
+	stale?: boolean;
 	account: string;
 	authIndex: string;
 	label: string;
@@ -70,6 +81,7 @@ export interface UsageDocument {
 
 interface CacheEntry {
 	fetchedAt: number;
+	scope: string;
 	doc: UsageDocument;
 	source: UsageSource;
 	contract: number;
@@ -126,11 +138,14 @@ function parseUsage(body: unknown, origin: string): UsageDocument {
 export async function fetchUsage(
 	cfg: ProxyConfig,
 	resolvedUsageKey: string,
-	opts: { force?: boolean } = {},
+	opts: { force?: boolean; resolvedApiKey?: string } = {},
 ): Promise<UsageDocument> {
+	const apiKey = opts.resolvedApiKey ?? (cfg.proxy.apiKey ? resolveConfigValue(cfg.proxy.apiKey) : "");
+	const scope = cacheScope(cfg.proxy.endpoint, apiKey, PREFERRED_CONTRACT, resolvedUsageKey);
 	if (
 		!opts.force &&
 		cache &&
+		cache.scope === scope &&
 		Date.now() - cache.fetchedAt < cfg.usageCacheTtlMs
 	) {
 		return cache.doc;
@@ -140,16 +155,14 @@ export async function fetchUsage(
 	try {
 		origin = new URL(cfg.proxy.endpoint).origin;
 	} catch {
-		throw new Error(`proxy.endpoint is not a valid URL: ${cfg.proxy.endpoint}`);
+		throw new Error("proxy.endpoint is not a valid URL");
 	}
-	// The key may be a `!command` reference, so it must be resolved before use.
-	const apiKey = cfg.proxy.apiKey ? resolveConfigValue(cfg.proxy.apiKey) : "";
 
 	// Preferred path: the plugin, using the key already configured for models.
 	if (apiKey) {
 		try {
 			const { doc, contract } = await fetchFromPlugin(origin, apiKey);
-			cache = { fetchedAt: Date.now(), doc, source: "plugin", contract };
+			cache = { fetchedAt: Date.now(), scope, doc, source: "plugin", contract };
 			log.debug(
 				`usage fetched from plugin (contract v${contract}), accounts:`,
 				doc.accounts.length,
@@ -171,7 +184,7 @@ export async function fetchUsage(
 
 	const doc = await fetchFromSidecar(origin, resolvedUsageKey);
 	// The sidecar predates contracts and only ever served the v1 shape.
-	cache = { fetchedAt: Date.now(), doc, source: "sidecar", contract: 1 };
+	cache = { fetchedAt: Date.now(), scope, doc, source: "sidecar", contract: 1 };
 	log.debug("usage fetched from sidecar, accounts:", doc.accounts.length);
 	return doc;
 }
@@ -229,5 +242,13 @@ async function fetchFromSidecar(
 	if (!resp.ok) {
 		throw new Error(`/api/usage returned ${resp.status}`);
 	}
-	return parseUsage(await resp.json(), "/api/usage");
+	const doc = parseUsage(await resp.json(), "/api/usage");
+	// This legacy endpoint predates scope fields and serves provider quotas.
+	// Never apply this default to AGP usage: an unclassified key cap is not a
+	// provider subscription. Preserve any explicit scope a newer sidecar emits.
+	for (const account of doc.accounts) {
+		account.scope ??= "provider_subscription";
+		for (const group of account.groups ?? []) group.scope ??= account.scope;
+	}
+	return doc;
 }

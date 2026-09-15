@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.3",
+	"version": "0.4.3-agp.4",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -27,9 +27,10 @@
 		"typecheck": "tsc --noEmit",
 		"check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts",
 		"check:contract": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/bridge-contract.ts",
+		"check:models": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/model-contract.ts",
 		"check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts",
 		"check:register-all": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/register-all.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:child && npm run check:register-all"
+		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:child && npm run check:register-all"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-ai": "*",

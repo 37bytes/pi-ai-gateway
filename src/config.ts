@@ -20,8 +20,7 @@
 //       }
 //     },
 //     "registerAll": true,   // optional: register EVERY provider/model the gateway reports
-//                            // (builtin providers + every custom pool group); when on,
-//                            // builtinProviders/customProviders lists are ignored
+//                            // with explicit matching model settings preserved
 //     "discoveryExcludes": ["*:*"],
 //     "overrides": {},
 //     "refreshIntervalMinutes": 0,
@@ -133,11 +132,12 @@ export interface CustomProviderModelConfig {
 	contextWindow?: number;
 	maxTokens?: number;
 	reasoning?: boolean;
+	input?: ("text" | "image")[];
 	cost?: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
+		input?: number;
+		output?: number;
+		cacheRead?: number;
+		cacheWrite?: number;
 	};
 }
 
@@ -160,8 +160,8 @@ export interface ProxyConfig {
 	 * Register mode. When true, every provider and model the gateway reports in
 	 * discovery is registered with OMP: each builtin provider (openai, anthropic,
 	 * …) with ALL of its models, and every custom-pool group as its own provider.
-	 * The explicit builtinProviders/customProviders allowlists are ignored while
-	 * this is on — new models the gateway adds appear automatically.
+	 * Explicit settings for matching models are preserved. Unrelated custom
+	 * providers remain explicit; connector-backed groups use the server namespace.
 	 */
 	registerAll: boolean;
 	discoveryExcludes: string[];
@@ -279,10 +279,7 @@ export function resolveConfigValue(raw: string | undefined | null): string {
 			}).trim();
 		} catch (err) {
 			// Don't dump stack traces for the common "file not found" case — just say what didn't resolve.
-			const msg =
-				(err as { stderr?: Buffer | string })?.stderr?.toString?.()?.trim() ??
-				(err as Error).message;
-			log.warn(`failed to resolve "!" config value (${v}): ${msg}`);
+			log.warn('failed to resolve "!" config value');
 			return "";
 		}
 	}

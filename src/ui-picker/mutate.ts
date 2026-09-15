@@ -44,17 +44,6 @@ export function poolFor(
 	});
 }
 
-function toEntry(m: ModelEntry): CustomProviderModelConfig {
-	return {
-		id: m.id,
-		name: m.name,
-		contextWindow: m.contextWindow,
-		maxTokens: m.maxTokens,
-		reasoning: m.reasoning,
-		cost: m.cost,
-	};
-}
-
 export function attachModel(
 	cfg: ProxyConfig,
 	prov: ProviderEntry,
@@ -75,14 +64,16 @@ export function attachModel(
 		return;
 	}
 	// custom \u2014 exclusive: remove from any other custom group first.
+	let configured: CustomProviderModelConfig | undefined;
 	for (const [slug, p] of Object.entries(cfg.customProviders)) {
 		if (slug === prov.name) continue;
 		const i = p.models.findIndex((mm) => mm.id === model.id);
-		if (i >= 0) p.models.splice(i, 1);
+		if (i >= 0) configured = p.models.splice(i, 1)[0];
 	}
 	const cur = cfg.customProviders[prov.name] ?? { api: prov.api, models: [] };
 	if (!cur.models.some((mm) => mm.id === model.id)) {
-		cur.models.push(toEntry(model));
+		// Attaching selects a route, not a frozen copy of discovered metadata.
+		cur.models.push(configured ?? { id: model.id });
 	}
 	cfg.customProviders[prov.name] = cur;
 }

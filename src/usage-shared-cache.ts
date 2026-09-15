@@ -42,6 +42,7 @@ const LOCK_STALE_MS = 30_000;
 
 interface CacheEnvelope {
 	fetchedAt: number; // epoch ms
+	scope: string;
 	doc: UsageDocument;
 }
 
@@ -51,7 +52,7 @@ export interface CachedUsage {
 }
 
 /** Read the shared cache file. Returns null if missing/corrupt. */
-export function readUsageCache(): CachedUsage | null {
+export function readUsageCache(scope: string): CachedUsage | null {
 	if (!existsSync(USAGE_CACHE_PATH)) return null;
 	try {
 		const env = JSON.parse(
@@ -59,6 +60,7 @@ export function readUsageCache(): CachedUsage | null {
 		) as CacheEnvelope;
 		if (
 			!env ||
+			env.scope !== scope ||
 			typeof env.fetchedAt !== "number" ||
 			!env.doc ||
 			!Array.isArray(env.doc.accounts)
@@ -78,11 +80,11 @@ export function isUsageFresh(ageMs: number): boolean {
 }
 
 /** Write fresh usage data + timestamp to the shared cache file. */
-export function writeUsageCache(doc: UsageDocument): void {
+export function writeUsageCache(doc: UsageDocument, scope: string): void {
 	try {
 		mkdirSync(CONFIG_DIR, { recursive: true });
-		const env: CacheEnvelope = { fetchedAt: Date.now(), doc };
-		writeFileSync(USAGE_CACHE_PATH, JSON.stringify(env), "utf8");
+		const env: CacheEnvelope = { fetchedAt: Date.now(), scope, doc };
+		writeFileSync(USAGE_CACHE_PATH, JSON.stringify(env), { encoding: "utf8", mode: 0o600 });
 	} catch (err) {
 		log.warn("failed to write usage cache:", (err as Error).message);
 	}

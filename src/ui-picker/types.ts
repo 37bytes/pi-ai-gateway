@@ -35,15 +35,7 @@ export interface ModelEntry {
 	origin?: string;
 	/** Raw upstream owned_by tag, for grouping/UX. */
 	ownedBy?: string;
-	reasoning: boolean;
-	contextWindow: number;
-	maxTokens: number;
-	cost?: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-	};
+	reasoning?: boolean;
 }
 
 export interface CatalogIndex {

@@ -18,8 +18,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
 
-import { applyAll, registerAllSlug } from "./src/apply.ts";
+import { applyAll, registrationConfig } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
+import { cacheScope } from "./src/cache-scope.ts";
 import { registerCommands } from "./src/commands.ts";
 import { loadConfig, resolveConfigValue } from "./src/config.ts";
 import { detectConflicts } from "./src/conflicts.ts";
@@ -78,7 +79,9 @@ async function loadUsageCached(
 	resolvedUsageKey: string,
 	opts: { readOnly?: boolean } = {},
 ): Promise<UsageDocument | null> {
-	const cached = readUsageCache();
+	const apiKey = resolveConfigValue(cfg.proxy.apiKey);
+	const scope = cacheScope(cfg.proxy.endpoint, apiKey, PREFERRED_CONTRACT, resolvedUsageKey);
+	const cached = readUsageCache(scope);
 	if (cached && isUsageFresh(cached.ageMs)) return cached.doc;
 	// readOnly mode (debounce path): never fetch, serve stale cache if available.
 	if (opts.readOnly) return cached?.doc ?? null;
@@ -89,8 +92,8 @@ async function loadUsageCached(
 		return cached?.doc ?? null;
 	}
 	try {
-		const doc = await fetchUsage(cfg, resolvedUsageKey, { force: true });
-		writeUsageCache(doc);
+		const doc = await fetchUsage(cfg, resolvedUsageKey, { force: true, resolvedApiKey: apiKey });
+		writeUsageCache(doc, scope);
 		return doc;
 	} catch (e) {
 		log.debug("usage fetch failed in shared cache:", (e as Error).message);
@@ -170,6 +173,9 @@ async function refreshQuotaStatus(
 	model: { provider: string; id?: string } | undefined,
 	opts: { readOnly?: boolean } = {},
 ): Promise<void> {
+	// Setup may have switched endpoint/key since this session's callbacks loaded.
+	cfg = loadConfig();
+	resolvedUsageKey = resolveConfigValue(cfg.proxy.usageKey);
 	if (!model) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
@@ -179,13 +185,23 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const discovery = readDiscoveryCache()?.discovery;
-	const entry = discovery?.customPool.find((candidate) =>
-		(candidate.selectorId || candidate.id) === model.id &&
-		(cfg.registerAll ? registerAllSlug(candidate.suggestedProvider) === model.provider : cfg.customProviders[model.provider]?.models.some((configured) => configured.id === candidate.id)),
+	const discovery = readDiscoveryCache(cacheScope(cfg.proxy.endpoint, resolveConfigValue(cfg.proxy.apiKey), PREFERRED_CONTRACT))?.discovery;
+	if (!discovery) {
+		ui.setStatus(QUOTA_STATUS_KEY, undefined);
+		return;
+	}
+	const current = registrationConfig(cfg, discovery);
+	const entry = discovery.customPool.find((candidate) =>
+		(candidate.selectorId ?? candidate.id) === model.id &&
+		current.customProviders[model.provider]?.models.some((configured) => configured.id === candidate.id),
+	) ?? discovery.builtinProviders.find((provider) => provider.name === model.provider)?.models.find((candidate) =>
+		(candidate.selectorId ?? candidate.id) === model.id && current.builtinProviders[model.provider]?.models.includes(candidate.id),
 	);
-	const usageProvider = entry?.providerId ? entry.id.split("/")[0]! : entry?.ownedBy || model.provider;
-	const rendered = renderQuotaSegment(doc, usageProvider, ui.theme, model.id);
+	const rendered = entry ? renderQuotaSegment(doc, {
+		providerId: entry.providerId,
+		providerKind: entry.providerKind,
+		modelIds: [entry.id, entry.wireId, entry.selectorId, entry.canonicalModel].filter((id): id is string => !!id),
+	}, ui.theme, model.id) : null;
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 
@@ -252,7 +268,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 	}
 
 	try {
-		const cached = readDiscoveryCache();
+		const cached = readDiscoveryCache(cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT));
 		if (cached) {
 			// Serve the last good discovery instantly so Pi startup never blocks on
 			// the ~5s proxy round-trip, then revalidate over the network in the
@@ -302,10 +318,8 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 
 	// -------- status-line quota segment
 	//
-	// The segment is context-aware: it shows 5h/7d windows for the current
-	// model's provider only (anthropic→claude, openai→codex, custom→hidden).
-	// The shared file cache ensures multiple Pi instances don't fetch more than
-	// once every 2 minutes.
+	// The footer binds the selected discovery entry to its connector UUID.
+	// It never guesses codex/claude identity from a local provider name.
 	const resolvedUsageKey = headless
 		? ""
 		: resolveConfigValue(cfg.proxy.usageKey);

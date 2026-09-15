@@ -3,7 +3,7 @@
 // Format:  <gauge-icon> <braille-5h><braille-7d> <5h%>/<7d%>
 // Example: 󰐧 ⣷⣤ 83/23   (claude: 5h=83% green, 7d=23% yellow)
 //
-// Context-aware: the caller supplies the exact discovery namespace used by usage.
+// Context-aware: discovery supplies connector identity, never a slug heuristic.
 //
 // Aggregation: MAX remaining fraction across live accounts (not disabled,
 // not unavailable) for each 5h/7d window label.
@@ -14,6 +14,26 @@
 // stays decoupled from Pi's internal Theme class.
 
 import type { UsageAccount, UsageDocument, UsageGroup } from "./fetch-usage.ts";
+
+export interface QuotaBinding {
+	providerId?: string;
+	/** Explicit server kind is only a fallback when no UUID was supplied. */
+	providerKind?: string;
+	modelIds?: string[];
+}
+
+export function quotaAccounts(doc: UsageDocument, binding: QuotaBinding): UsageAccount[] {
+	return doc.accounts.filter((account) =>
+		account.scope === "provider_subscription" && (binding.providerId
+			? account.providerId === binding.providerId
+			: !account.providerId && !!binding.providerKind && account.provider === binding.providerKind),
+	);
+}
+
+function isUsableGroup(group: UsageGroup): group is UsageGroup & { remainingFraction: number } {
+	return group.scope !== "key_entitlement" && (group.state === undefined || group.state === "supported") &&
+		typeof group.remainingFraction === "number" && Number.isFinite(group.remainingFraction);
+}
 
 /** nf-md-gauge (Nerd Font Material Design speedometer). */
 const GAUGE_ICON = "\u{F0627}";
@@ -27,6 +47,7 @@ function isLiveAccount(a: UsageAccount): boolean {
 	return (
 		!a.disabled &&
 		!a.unavailable &&
+		!a.stale && a.status !== "stale" && a.state !== "stale" && a.state !== "unknown" &&
 		a.supported &&
 		Array.isArray(a.groups) &&
 		a.groups.length > 0
@@ -83,8 +104,8 @@ interface WindowAggregate {
  * Aggregate a window period across live accounts.
  *
  * Semantics: within each account, take the MIN remaining among matching
- * windows (the account's bottleneck for that period). Then take the MAX across
- * accounts (the router will dispatch to the account with the most headroom).
+ * windows, then the MAX across eligible accounts. This is available provider
+ * capacity, not a guarantee about the router's affinity-bound account.
  */
 function aggregateWindow(
 	accounts: UsageAccount[],
@@ -95,7 +116,7 @@ function aggregateWindow(
 		if (!isLiveAccount(a)) continue;
 		let minWithin = Infinity;
 		for (const g of a.groups ?? []) {
-			if (predicate(g)) {
+			if (predicate(g) && isUsableGroup(g)) {
 				if (g.remainingFraction < minWithin) minWithin = g.remainingFraction;
 			}
 		}
@@ -137,7 +158,7 @@ function pct(fraction: number): number {
  * provider has no quota windows (segment should be hidden).
  *
  * @param doc     - usage document from /api/usage
- * @param piProvider - exact provider namespace from gateway discovery
+ * @param binding - connector UUID and explicit kind from gateway discovery
  * @param theme   - Pi theme for coloring (from ctx.ui.theme)
  * @param modelID - id of the selected model (e.g. "claude-fable-5"). When the
  *   provider reports a weekly window scoped to that model, it is shown as its
@@ -145,36 +166,63 @@ function pct(fraction: number): number {
  */
 export function renderQuotaSegment(
 	doc: UsageDocument,
-	piProvider: string,
+	binding: QuotaBinding,
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	theme: {
 		fg(color: "success" | "warning" | "error" | "dim", text: string): string;
 	},
 	modelID?: string,
 ): string | null {
-	const accounts = doc.accounts.filter((a) => a.provider === piProvider);
+	const accounts = quotaAccounts(doc, binding);
 	if (accounts.length === 0) return null;
+	if (doc.cache?.stale || accounts.every((a) => a.stale || a.status === "stale" || a.state === "stale")) return theme.fg("dim", "quota stale");
+	const selectedIds = new Set([modelID, ...(binding.modelIds ?? [])].filter((id): id is string => !!id));
+	const explicitModels = (g: UsageGroup) => g.models?.length ? g.models : g.model ? [g.model] : [];
+	const matchesSelection = (g: UsageGroup) => {
+		const ids = explicitModels(g);
+		return !ids.length || ids.some((id) => selectedIds.has(id));
+	};
 
 	// A weekly window scoped to the selected model, e.g. Fable. It is a sub-cap
 	// on the weekly pool rather than a separate allowance, so it is shown
 	// alongside the account-wide weekly figure, never instead of it.
-	const scopeOf = (g: UsageGroup) => (modelID ? scopedModelName(g) : null);
 	const isSelectedModelWindow = (g: UsageGroup) => {
-		const scope = scopeOf(g);
-		return scope !== null && scopeMatchesModel(scope, modelID as string);
+		if (explicitModels(g).length) return is7dGroup(g) && matchesSelection(g);
+		const scope = scopedModelName(g);
+		return !!modelID && scope !== null && scopeMatchesModel(scope, modelID);
 	};
 
-	const w5 = aggregateWindow(accounts, is5hGroup);
+	const w5 = aggregateWindow(accounts, (g) => is5hGroup(g) && matchesSelection(g));
 	// Other models' scoped windows say nothing about the model in use, and
 	// including them used to drag the weekly figure down for no reason.
 	const w7 = aggregateWindow(
 		accounts,
-		(g) => is7dGroup(g) && scopeOf(g) === null,
+		(g) => is7dGroup(g) && scopedModelName(g) === null && !explicitModels(g).length,
 	);
 	const wModel = aggregateWindow(accounts, isSelectedModelWindow);
+	// Other server-defined periods (monthly, subscription, daily, etc.) retain
+	// their own labels. A known capacity must not disappear just because it is
+	// not a 5h/7d window, and unlike periods must never be added together.
+	const genericLabels = new Map<string, string>();
+	for (const account of accounts) {
+		if (!isLiveAccount(account)) continue;
+		for (const group of account.groups ?? []) {
+			if (isUsableGroup(group) && matchesSelection(group) && !is5hGroup(group) && !is7dGroup(group)) {
+				genericLabels.set(group.id, group.label?.trim() || group.id);
+			}
+		}
+	}
+	const genericWindows: Array<{ label: string; fraction: number }> = [];
+	for (const [id, label] of genericLabels) {
+		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group));
+		if (aggregate) genericWindows.push({ label, fraction: aggregate.fraction });
+	}
 
-	// Nothing to show → hide the segment entirely
-	if (!w5 && !w7 && !wModel) return null;
+	// An authorized subscription without a fresh measurement is not zero quota.
+	if (!w5 && !w7 && !wModel && genericWindows.length === 0) {
+		const stale = accounts.some((a) => a.stale || a.status === "stale" || a.state === "stale" || a.groups?.some((g) => g.state === "stale" && matchesSelection(g)));
+		return theme.fg("dim", stale ? "quota stale" : accounts.some((a) => a.supported) ? "quota unknown" : "quota unsupported");
+	}
 
 	const parts: string[] = [theme.fg("dim", GAUGE_ICON)];
 	const push = (label: string, fraction: number) => {
@@ -186,25 +234,12 @@ export function renderQuotaSegment(
 
 	if (w5) push("5h", w5.fraction);
 	if (w7) push("7d", w7.fraction);
-	if (wModel)
-		push(modelWindowLabel(accounts, modelID as string), wModel.fraction);
+	if (wModel) {
+		const group = accounts.flatMap((a) => isLiveAccount(a) ? a.groups ?? [] : []).find((g) => isUsableGroup(g) && isSelectedModelWindow(g));
+		push(group?.label?.replace(/^7d\s+/i, "").trim() || "model", wModel.fraction);
+	}
+	for (const window of genericWindows) push(window.label, window.fraction);
 
 	return parts.join(" ");
 }
 
-/**
- * Label for the selected model's own weekly window, taken from the group so it
- * reads the way the provider names it ("7d Fable" -> "Fable").
- */
-function modelWindowLabel(accounts: UsageAccount[], modelID: string): string {
-	for (const a of accounts) {
-		for (const g of a.groups ?? []) {
-			const scope = scopedModelName(g);
-			if (scope && scopeMatchesModel(scope, modelID)) {
-				const label = (g.label ?? "").replace(/^7d\s+/i, "").trim();
-				return label || scope;
-			}
-		}
-	}
-	return "model";
-}

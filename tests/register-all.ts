@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cacheScope } from "../src/cache-scope.ts";
 
 const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-all-"));
 const originalHome = process.env.HOME;
@@ -37,6 +38,7 @@ try {
 		join(configDir, "discovery-cache.json"),
 		JSON.stringify({
 			savedAt: Date.now(),
+			scope: cacheScope("https://proxy.test/v1", "test-key", 2),
 			discovery: {
 				source: "well-known",
 				upstreamVersion: "agp",

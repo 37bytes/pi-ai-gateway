@@ -17,6 +17,7 @@ export const DISCOVERY_CACHE_PATH = join(CONFIG_DIR, "discovery-cache.json");
 
 interface CacheEnvelope {
 	savedAt: number;
+	scope: string;
 	discovery: Discovery;
 }
 
@@ -25,7 +26,7 @@ export interface CachedDiscovery {
 	ageMs: number;
 }
 
-export function readDiscoveryCache(): CachedDiscovery | null {
+export function readDiscoveryCache(scope: string): CachedDiscovery | null {
 	if (!existsSync(DISCOVERY_CACHE_PATH)) return null;
 	try {
 		const env = JSON.parse(
@@ -34,6 +35,7 @@ export function readDiscoveryCache(): CachedDiscovery | null {
 		if (
 			!env ||
 			typeof env.savedAt !== "number" ||
+			env.scope !== scope ||
 			!env.discovery ||
 			!Array.isArray(env.discovery.builtinProviders) ||
 			!Array.isArray(env.discovery.customPool)
@@ -47,11 +49,11 @@ export function readDiscoveryCache(): CachedDiscovery | null {
 	}
 }
 
-export function writeDiscoveryCache(discovery: Discovery): void {
+export function writeDiscoveryCache(discovery: Discovery, scope: string): void {
 	try {
 		mkdirSync(dirname(DISCOVERY_CACHE_PATH), { recursive: true });
-		const env: CacheEnvelope = { savedAt: Date.now(), discovery };
-		writeFileSync(DISCOVERY_CACHE_PATH, JSON.stringify(env), "utf8");
+		const env: CacheEnvelope = { savedAt: Date.now(), scope, discovery };
+		writeFileSync(DISCOVERY_CACHE_PATH, JSON.stringify(env), { encoding: "utf8", mode: 0o600 });
 	} catch (err) {
 		log.warn("failed to write discovery cache:", (err as Error).message);
 	}

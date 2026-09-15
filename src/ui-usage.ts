@@ -119,7 +119,8 @@ function formatAccountHeader(a: UsageAccount): string {
 	const status = accountStatus(a);
 	const counters = `${C.green}✓${a.success}${C.reset} ${C.red}✗${a.failed}${C.reset}`;
 	const label = truncate(a.label, 36);
-	return `  ${status} ${C.bold}${label}${C.reset}  ${counters}`;
+	const provenance = [a.scope, a.stale || a.state === "stale" ? "stale" : a.state, a.capturedAt ? `captured ${a.capturedAt}` : undefined].filter(Boolean).join(" · ");
+	return `  ${status} ${C.bold}${label}${C.reset}  ${counters}${provenance ? `  ${C.dim}${provenance}${C.reset}` : ""}`;
 }
 
 // Status icons — distinct from the ✓/✗ request counters so the user
@@ -137,14 +138,17 @@ function accountStatus(a: UsageAccount): string {
 }
 
 function formatGroup(g: UsageGroup): string {
-	const f = clamp(g.remainingFraction);
-	const pct = Math.round(f * 100);
-	const bar = renderBar(f);
 	const reset = g.resetTime
 		? `  ${C.dim}reset ${humanizeReset(g.resetTime)}${C.reset}`
 		: "";
-	const label = truncate(g.label, MAX_LABEL_WIDTH).padEnd(MAX_LABEL_WIDTH, " ");
-	return `    ${bar} ${formatPct(pct, f)}  ${label}${reset}`;
+	const label = truncate(g.label || g.id, MAX_LABEL_WIDTH).padEnd(MAX_LABEL_WIDTH, " ");
+	const captured = g.capturedAt ? `  ${C.dim}captured ${g.capturedAt}${C.reset}` : "";
+	if (g.state === "stale" || g.state === "unknown" || typeof g.remainingFraction !== "number" || !Number.isFinite(g.remainingFraction)) {
+		return `    ${C.dim}${g.state || "unknown"}${C.reset}  ${label}${reset}${captured}`;
+	}
+	const f = clamp(g.remainingFraction);
+	const pct = Math.round(f * 100);
+	return `    ${renderBar(f)} ${formatPct(pct, f)}  ${label}${reset}${captured}`;
 }
 
 function renderBar(fraction: number): string {

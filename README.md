@@ -22,8 +22,16 @@ models — so that per-model window is shown **alongside** the weekly figure
 rather than folded into it. Switching models switches the window on display.
 Other models' windows never drag down the general figure.
 
-Green ≥ 70%, yellow 30–69%, red < 30%. The **Usage** tab breaks the same data
-down per account, with reset times.
+Green ≥ 70%, yellow 30–69%, red < 30%. The **Usage** tab retains reset and
+capture times, freshness, and scope. The footer matches the discovered connector
+UUID, not a provider-name guess, and displays only `provider_subscription`
+windows. `key_entitlement` caps remain separate in Usage. Missing and stale
+measurements say `unknown` or `stale`; they never become zero-percent quota.
+The footer shows available provider capacity (the most headroom among eligible
+accounts), not a promise about the affinity-selected account or a personal
+entitlement. Different periods and model-specific windows are never summed.
+Monthly, subscription, and other server-defined windows retain their actual
+labels and independent percentages; they are not relabeled as 5h or 7d.
 
 ## How the numbers get here
 
@@ -47,7 +55,7 @@ with local heuristics, and the quota display is absent.
 | | With AGP compatibility façade | Fallback |
 | --- | --- | --- |
 | Quota in status line + Usage tab | Key-scoped persisted windows | Unavailable |
-| Model discovery | Grant-filtered AGP catalogue | `/v1/models` defaults |
+| Model discovery | Grant-filtered AGP catalogue | `/v1/models`, unknown metadata omitted |
 | Classification | Server-declared | Local `owned_by` heuristics |
 
 ## Features
@@ -55,7 +63,7 @@ with local heuristics, and the quota display is absent.
 - **Live quota** — status-line windows for the model in use, per-account bars in the **Usage** tab, no LLM call
 - **Unified hub** — one `/cliproxy` overlay with **Models / Usage / Diagnostics** tabs (number hotkeys `1` `2` `3`) plus global actions: `r` refresh, `e` setup, `s` save
 - **Built-in provider routing** — whitelist which Anthropic / OpenAI / etc. models are available through the proxy
-- **Custom provider groups** — create named groups (e.g. `corp-glm`, `corp-gemini`) for proxy-only models with automatic metadata from [models.dev](https://models.dev)
+- **Custom provider groups** — use server connector namespaces and effective AGP model cards, with explicit manual overrides when needed
 - **Exclusive model pool** — a model assigned to one group automatically disappears from others, grouped by `owned_by` with type-to-filter (`/`)
 - **Live save state** — the header shows `● unsaved` while you edit and `✓ settings saved` after `s`, no console noise
 - **Setup wizard** — `/cliproxy-setup` configures endpoint, API key, and provider prefix interactively
@@ -89,6 +97,12 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 
 You need an AI Gateway Platform endpoint with the OMP compatibility façade
 enabled and an ordinary AGP LLM key authorized for the required models.
+
+OMP must support explicit `metadataState` / `priceState`, optional model
+capacities and partial prices, and the `buildModel` / `toModelSpec` runtime
+exports. Older OMP hosts fabricate 128K/zero defaults and cannot honestly show
+unknown prices. Update the host together with this extension; the plugin does
+not hide unknown models or use NaN/zero substitutes.
 
 ## Install
 
@@ -165,15 +179,39 @@ Default `false` (explicit allowlists above decide what is registered). Set it
 to `true` to register **every** provider and model the gateway serves on each
 refresh:
 
-- every built-in provider (e.g. `openai` → all `codex/*`/`cx/*` models) with
-  all of its models, and
-- every custom-pool group as its own provider (grouped by the gateway's
-  suggested provider name, slugified — `ChatGPT Web` → `chatgpt-web`).
+- every built-in provider with its discovered models, and
+- every connector-backed custom-pool group under the exact configured server
+  namespace (`codex`, for example). Legacy display-only group names are
+  slugified (`ChatGPT Web` → `chatgpt-web`).
 
-New models and groups the gateway adds later appear automatically without a
-config edit. While `registerAll` is on, `builtinProviders`/`customProviders`
-lists are ignored (keep them if you want a quick switch back to manual mode).
-The Models tab in `/cliproxy` shows a read-only summary in this mode.
+New models appear without a config edit. Matching explicit model settings are
+preserved, as are unrelated custom provider definitions. The Models tab remains
+read-only in this mode. `providerPrefix` applies only to legacy discovery; it
+does not turn a server namespace `codex` into `cpa-codex`. Changing this option
+does not rewrite existing OMP roles or unrelated custom providers.
+
+### Model identity and metadata
+
+For server route `codex/gpt-6-astra`, OMP registers provider `codex` and local
+model ID `gpt-6-astra`, so the selector is displayed exactly once. Chat
+Completions, Responses, and Messages requests always carry the server's exact
+`wireId`, even after an application payload hook. Session headers, cancellation,
+and other stream options are preserved. A missing `x-session-id` is filled from
+the OMP session ID without replacing an explicit caller header.
+
+Metadata precedence is `overrides[wireId]` > explicit configured model fields >
+trusted server metadata > genuine local catalog metadata for legacy built-ins.
+Gateway prices come only from the active AGP snapshot or explicit overrides,
+not a bundled upstream tariff. Cost components are USD per million tokens;
+missing components stay absent. `metadataState` is `catalog`, `override`, or
+`unknown`; `priceState` is `known`, `partial`, or `unknown`. Selecting a model in
+the picker does not freeze discovered capacity/prices into manual overrides.
+
+Discovery and usage caches are bound to endpoint, a SHA-256 identity of the
+resolved credentials, and contract version. Raw credentials are not written to
+cache envelopes. Pre-scope caches and caches from another endpoint/key are
+ignored. Repopulate discovery interactively after upgrading or changing keys
+before starting headless children.
 
 ## Setup
 
@@ -181,7 +219,7 @@ Run `/cliproxy-setup` in Pi and enter:
 
 - **endpoint** — your public proxy URL ending with `/v1`
 - **apiKey** — ordinary AI Gateway Platform LLM key
-- **providerPrefix** — short slug for custom provider names (e.g. `corp`)
+- **providerPrefix** — optional prefix for legacy custom groups; use empty for native AGP namespaces
 
 ## Migrating from the wellknown sidecar
 
@@ -232,3 +270,24 @@ src/
     prompt-name.ts       new-group name prompt
   log.ts            tagged logger
 ```
+
+## Release acceptance
+
+The source candidate is `0.4.3-agp.4`; publishing and installation are separate
+operator steps. `npm test` includes isolated HTTP/SSE model routing, metadata
+precedence, quota identity, cache authority, and headless cache checks.
+
+Before publishing, also exercise the **actual OMP extension loader**, not only
+the upstream Pi test peer: use an isolated HOME/config and a local fixture
+server with no production credentials. Load this checkout's `index.ts` through
+OMP's extension loader; apply its pending providers to a real ModelRegistry.
+Assert `codex/gpt-6-astra` resolves once, context 1,050,000 / output 128,000 and
+cost 10/50/1/12.5 are retained, and unknown/partial model cards stay explicit.
+Stream the registry model through each underlying API into the fixture server;
+assert exact `codex/gpt-6-astra` payload, preserved session/custom headers and
+SSE result, and cancellation without a request. Include `maxInFlightRequests: { codex: 1 }`
+to catch nested custom/built-in dispatch acquiring the same provider permit
+twice. Exercise footer selection with
+two same-kind connector UUIDs plus a key-entitlement record; only the selected
+subscription must contribute. Repeat with the packaged candidate via the
+installed-package loader path. No paid inference is needed for this smoke.

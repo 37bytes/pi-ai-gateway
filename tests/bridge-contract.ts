@@ -1,9 +1,9 @@
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { renderQuotaSegment } from "../src/status-quota.ts";
 const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-contract-"));
 const originalHome = process.env.HOME;
 const originalFetch = globalThis.fetch;
@@ -31,6 +31,7 @@ const cfg = {
 	},
 	builtinProviders: {},
 	customProviders: {},
+	registerAll: false,
 	discoveryExcludes: [],
 	overrides: {},
 	refreshIntervalMinutes: 0,
@@ -165,15 +166,27 @@ try {
 	assert.equal(lastUsageSource(), "plugin");
 	assert.equal(lastUsageContract(), 2);
 
+	const legacyAccount = {
+		provider: "codex", account: "opaque-account", authIndex: "opaque-account", label: "Subscription",
+		status: "active", disabled: false, unavailable: false, supported: true,
+		success: 0, failed: 0, lastRequestAt: null,
+		groups: [{ id: "five-hour", label: "5h", remainingFraction: 0.4, resetTime: null }],
+	};
+	const legacyUsage = { ...usageDocument, accounts: [
+		legacyAccount,
+		{ ...legacyAccount, account: "opaque-key-cap", scope: "key_entitlement", groups: [{ ...legacyAccount.groups[0], remainingFraction: 1 }] },
+	] };
+	const quotaTheme = { fg(_color: "success" | "warning" | "error" | "dim", text: string) { return text; } };
 	clearUsageCache();
 	calls = installFetch((call) => {
 		if (call.path === "/v0/resource/plugins/pi-bridge/capabilities") return json({}, 404);
 		if (call.path === "/v0/resource/plugins/pi-bridge/usage") return json({}, 404);
 		if (call.path === "/v0/resource/plugins/pi-bridge/dev/usage") return json({}, 404);
-		if (call.path === "/api/usage") return json(usageDocument);
+		if (call.path === "/api/usage") return json(legacyUsage);
 		throw new Error(`unexpected legacy usage request: ${call.path}`);
 	});
-	assert.deepEqual(await fetchUsage(cfg, "legacy-key", { force: true }), usageDocument);
+	const legacyDoc = await fetchUsage(cfg, "legacy-key", { force: true });
+	assert.match(renderQuotaSegment(legacyDoc, { providerKind: "codex" }, quotaTheme)!, /5h .* 40/);
 	assert.deepEqual(
 		calls.map((call) => call.path),
 		[
@@ -188,33 +201,11 @@ try {
 	assert.equal(lastUsageSource(), "sidecar");
 	assert.equal(lastUsageContract(), 1);
 
-	// Discovery's clean selector must never become an unsafe bare model on the wire.
-	calls = installFetch(() => json({ schemaVersion: 1, builtinProviders: {}, customModelPool: [{ id: "team-route/model", wireId: "team-route/model", selectorId: "model", providerId: "connector-id", canonicalModel: "vendor/model", suggestedProviderName: "team-route", api: "openai-completions", metadataState: "unknown" }] }));
-	const identityDiscovery = await fetchDiscovery({ ...cfg, proxy: { ...cfg.proxy, providerPrefix: "" } }, "gateway-key");
-	assert.equal(identityDiscovery.customPool[0]?.suggestedProvider, "team-route");
-	assert.equal(identityDiscovery.customPool[0]?.selectorId, "model");
-	// Load after HOME isolation: apply imports the path-sensitive config module.
-	const { applyAll } = await import("../src/apply.ts");
-	let registered: ProviderConfig | undefined;
-	await applyAll({ registerProvider(_name: string, config: ProviderConfig) { registered = config; } } as ExtensionAPI, { ...cfg, registerAll: true }, identityDiscovery);
-	assert.equal(registered?.models?.[0]?.id, "model");
-	assert.ok(Number.isFinite(registered?.models?.[0]?.contextWindow));
-	let wirePayload: Record<string, unknown> | undefined;
-	globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-		const raw = input instanceof Request ? await input.text() : String(init?.body);
-		wirePayload = JSON.parse(raw);
-		const chunk = { id: "completion", object: "chat.completion.chunk", created: 0, model: "team-route/model", choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] };
-		const finished = { ...chunk, choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } };
-		return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(finished)}\n\ndata: [DONE]\n\n`, { headers: { "Content-Type": "text/event-stream" } });
-	}) as typeof fetch;
-	assert.ok(registered?.streamSimple);
-	const selected = { ...registered!.models![0]!, provider: "team-route", api: registered!.api!, baseUrl: registered!.baseUrl! };
-	const stream = registered!.streamSimple!(selected, { messages: [{ role: "user", content: "hello", timestamp: 0 }] }, { apiKey: "gateway-key", onPayload: (payload) => ({ ...(payload as object), model: "unsafe-bare-model" }) });
-	const completion = await stream.result();
-	assert.equal(completion.stopReason, "stop", completion.errorMessage);
-	assert.equal(wirePayload?.model, "team-route/model");
-	assert.equal(completion.model, "model");
-	assert.ok(completion.content.some((part) => part.type === "text" && part.text === "ok"));
+	// Missing scope in native AGP usage is not sufficient to claim a subscription.
+	installFetch((call) => call.path.endsWith("capabilities") ? json({}, 404) : json({ ...usageDocument, accounts: [legacyAccount] }));
+	const unclassifiedNative = await fetchUsage(cfg, "legacy-key", { force: true });
+	assert.equal(renderQuotaSegment(unclassifiedNative, { providerKind: "codex" }, quotaTheme), null);
+
 	console.log("bridge contract check: ok");
 } finally {
 	globalThis.fetch = originalFetch;
