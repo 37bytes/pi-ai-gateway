@@ -209,6 +209,14 @@ Completions, Responses, and Messages requests always carry the server's exact
 and other stream options are preserved. A missing `x-session-id` is filled from
 the OMP session ID without replacing an explicit caller header.
 
+Gateway streaming rejects stale or mismatched provider/API/base-URL model
+objects before dispatch. On OMP, the final fetch is restricted to the exact
+registered gateway endpoint and refuses redirects, including URL rewrites from
+native provider environment settings. The host must keep extension model lists
+authoritative across native catalog refreshes and bind credentials to that
+ownership; a shared provider name is never permission to send the gateway key
+to a built-in first-party model.
+
 Metadata precedence is `overrides[wireId]` > explicit configured model fields >
 trusted server metadata > genuine local catalog metadata for legacy built-ins.
 Gateway prices come only from the active AGP snapshot or explicit overrides,
@@ -283,7 +291,7 @@ src/
 
 ## Release acceptance
 
-The source candidate is `0.4.3-agp.5`; publishing and installation are separate
+The source candidate is `0.4.3-agp.7`; publishing and installation are separate
 operator steps. `npm test` includes isolated HTTP/SSE model routing, metadata
 precedence, quota identity, cache authority, and headless cache checks.
 

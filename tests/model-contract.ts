@@ -162,6 +162,14 @@ try {
 		}) as typeof fetch;
 		const selected = { ...registered.models![0]!, provider: "codex", api: registered.api!, baseUrl: registered.baseUrl! };
 		const context = { messages: [{ role: "user" as const, content: "fixture request", timestamp: 0 }] };
+		for (const mismatch of [
+			{ ...selected, baseUrl: "https://api.deepseek.com/v1" },
+			{ ...selected, provider: "deepseek" },
+			{ ...selected, api },
+		]) {
+			assert.throws(() => registered.streamSimple!(mismatch, context, { apiKey: "fixture-key" }), /transport identity/);
+		}
+		assert.equal(requests, 0, "a stale same-selector object must never dispatch the gateway credential");
 		const result = await registered.streamSimple!(selected, context, {
 			apiKey: "fixture-key", sessionId: "session-fixture", headers: { "x-fixture": "kept", Authorization: "Bearer fixture-key" }, maxTokens: 256,
 			onPayload: async (payload) => ({ ...(payload as object), model: "unsafe-bare-model", fixture_marker: "preserved" }),

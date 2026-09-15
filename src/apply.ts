@@ -10,6 +10,9 @@ import { resolveConfigValue } from "./config.ts";
 import type { Discovery, DiscoveryModelEntry } from "./fetch-models.ts";
 import { log } from "./log.ts";
 
+type GatewayFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type GatewayStreamOptions = NonNullable<Parameters<typeof streamSimple>[2]> & { fetch?: GatewayFetch };
+
 
 const appliedProviderNames = new WeakMap<ExtensionAPI, Set<string>>();
 
@@ -115,8 +118,11 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 	appliedProviderNames.set(pi, ownedNames);
 	const register = (name: string, api: Api, models: GatewayModelConfig[], routes: Map<string, string>) => {
 		const bridgeAPI = `agp:${name}:${api}`;
+		const gatewayBaseUrl = baseUrlFor(api, cfg.proxy.endpoint);
+		const endpointSuffix = api === "anthropic-messages" ? "/v1/messages" : api === "openai-responses" ? "/responses" : "/chat/completions";
+		const gatewayRequestURL = new URL(gatewayBaseUrl.replace(/\/+$/, "") + endpointSuffix);
 		const config: ProviderConfig = {
-			baseUrl: baseUrlFor(api, cfg.proxy.endpoint),
+			baseUrl: gatewayBaseUrl,
 			apiKey: resolvedKey,
 			authHeader: true,
 			api: bridgeAPI,
@@ -124,6 +130,9 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 			// published upstream peer type has not yet adopted optional metadata.
 			models: models.map((m) => ({ ...m, api: bridgeAPI })) as unknown as ProviderModelConfig[],
 			streamSimple(model, context, options) {
+				if (model.provider !== name || model.api !== bridgeAPI || model.baseUrl !== gatewayBaseUrl) {
+					throw new Error("Gateway model transport identity does not match its registered provider");
+				}
 				const wireId = routes.get(model.id);
 				if (!wireId) throw new Error(`Unknown gateway selector ${name}/${model.id}`);
 				const headers = new Headers(options?.headers);
@@ -133,17 +142,27 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 				// Dispatch through the supported root API, with the real built-in
 				// family restored. Keeping agp:* here would recurse into this hook.
 				const transportModel = hostModels.buildModel && hostModels.toModelSpec
-					? hostModels.buildModel({ ...hostModels.toModelSpec(model), api })
-					: { ...model, api };
-				return streamSimple(transportModel, context, {
+					? hostModels.buildModel({ ...hostModels.toModelSpec(model), api, baseUrl: gatewayBaseUrl })
+					: { ...model, api, baseUrl: gatewayBaseUrl };
+				const send = (options as GatewayStreamOptions | undefined)?.fetch ?? globalThis.fetch;
+				const gatewayFetch: GatewayFetch = async (input, init) => {
+					const target = new URL(input instanceof Request ? input.url : String(input));
+					if (target.href !== gatewayRequestURL.href || target.username || target.password) {
+						throw new Error("Gateway transport rejected an endpoint outside its registered route");
+					}
+					return send(input, { ...init, redirect: "error" });
+				};
+				const transportOptions: GatewayStreamOptions = {
 					...options,
+					fetch: gatewayFetch,
 					headers: Object.fromEntries(headers),
 					onPayload: async (payload, sdkModel) => {
 						const next = await options?.onPayload?.(payload, sdkModel) ?? payload;
 						if (!next || typeof next !== "object" || Array.isArray(next)) throw new Error("Invalid gateway inference payload");
 						return { ...next, model: wireId };
 					},
-				});
+				};
+				return streamSimple(transportModel, context, transportOptions);
 			},
 		};
 		pi.registerProvider(name, config);
