@@ -122,6 +122,22 @@ try {
 	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.maxTokens, 64_000);
 	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.cost.input, 10);
 
+	const liveRegistry = new Map<string, ProviderConfig>([["another-extension", {}]]);
+	const liveAPI = {
+		registerProvider(name: string, config: ProviderConfig) { liveRegistry.set(name, config); },
+		unregisterProvider(name: string) { liveRegistry.delete(name); },
+	} as ExtensionAPI;
+	const legacyAlias = { ...model, id: "cx/gpt-6-astra", wireId: "cx/gpt-6-astra", suggestedProvider: "cx" };
+	await applyAll(liveAPI, explicit, { ...discovery, customPool: [model, legacyAlias] });
+	assert.ok(liveRegistry.has("cx"), "fixture must start with an announced legacy namespace");
+	await assert.rejects(applyAll(liveAPI, explicit, { ...discovery, customPool: [{ ...model, api: "anthropic-messages" }] }));
+	assert.ok(liveRegistry.has("cx"), "failed refresh must not retire the last successful catalog");
+	await applyAll(liveAPI, explicit, discovery);
+	assert.equal(liveRegistry.has("cx"), false, "retired namespace must disappear without restarting OMP");
+	assert.ok(liveRegistry.has("codex"));
+	assert.ok(liveRegistry.has("retained-custom"), "explicit current custom group must remain");
+	assert.ok(liveRegistry.has("another-extension"), "another extension's providers must remain");
+
 	for (const api of ["openai-completions", "openai-responses", "anthropic-messages"] as const) {
 		const registrations: Array<{ name: string; config: ProviderConfig }> = [];
 		await applyAll({ registerProvider(name: string, config: ProviderConfig) { registrations.push({ name, config }); } } as ExtensionAPI, cfg, { ...discovery, customPool: [{ ...model, api }] });

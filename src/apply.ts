@@ -11,6 +11,8 @@ import type { Discovery, DiscoveryModelEntry } from "./fetch-models.ts";
 import { log } from "./log.ts";
 
 
+const appliedProviderNames = new WeakMap<ExtensionAPI, Set<string>>();
+
 const hostModels = PiAI as typeof PiAI & {
 	toModelSpec?: (model: Parameters<typeof streamSimple>[0]) => Record<string, unknown>;
 	buildModel?: (spec: Record<string, unknown>) => Parameters<typeof streamSimple>[0];
@@ -108,6 +110,9 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 		return report;
 	}
 	cfg = registrationConfig(cfg, discovery);
+	const registeredNames = new Set<string>();
+	const ownedNames = appliedProviderNames.get(pi) ?? new Set<string>();
+	appliedProviderNames.set(pi, ownedNames);
 	const register = (name: string, api: Api, models: GatewayModelConfig[], routes: Map<string, string>) => {
 		const bridgeAPI = `agp:${name}:${api}`;
 		const config: ProviderConfig = {
@@ -142,6 +147,8 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 			},
 		};
 		pi.registerProvider(name, config);
+		registeredNames.add(name);
+		ownedNames.add(name);
 		report.registered.push({ provider: name, modelCount: models.length, api });
 	};
 
@@ -190,6 +197,10 @@ export async function applyAll(pi: ExtensionAPI, cfg: ProxyConfig, discovery: Di
 		if (models.length) register(name, provider.api, models, routes);
 		else report.skipped.push({ provider: name, reason: "no configured models present on proxy" });
 	}
+	for (const name of ownedNames) {
+		if (!registeredNames.has(name)) pi.unregisterProvider(name);
+	}
+	appliedProviderNames.set(pi, registeredNames);
 	log.info(`applyAll: registered ${report.registered.length} providers, skipped ${report.skipped.length}`);
 	return report;
 }

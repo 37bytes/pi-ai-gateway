@@ -190,6 +190,11 @@ read-only in this mode. `providerPrefix` applies only to legacy discovery; it
 does not turn a server namespace `codex` into `cpa-codex`. Changing this option
 does not rewrite existing OMP roles or unrelated custom providers.
 
+After a successful refresh, providers previously registered by this extension
+but absent from the current catalog/configuration are unregistered in the same
+session. A failed refresh keeps the last successful catalog; providers owned by
+other extensions are not removed.
+
 ### Model identity and metadata
 
 For server route `codex/gpt-6-astra`, OMP registers provider `codex` and local
@@ -273,7 +278,7 @@ src/
 
 ## Release acceptance
 
-The source candidate is `0.4.3-agp.4`; publishing and installation are separate
+The source candidate is `0.4.3-agp.5`; publishing and installation are separate
 operator steps. `npm test` includes isolated HTTP/SSE model routing, metadata
 precedence, quota identity, cache authority, and headless cache checks.
 
@@ -291,3 +296,6 @@ twice. Exercise footer selection with
 two same-kind connector UUIDs plus a key-entitlement record; only the selected
 subscription must contribute. Repeat with the packaged candidate via the
 installed-package loader path. No paid inference is needed for this smoke.
+Keep one session open with a warm `cx` namespace, remove it from the fixture
+catalog, and trigger real refresh. Verify the `cx` models disappear without a
+session restart while current explicit groups and another provider remain.
