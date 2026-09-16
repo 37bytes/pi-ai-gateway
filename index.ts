@@ -359,13 +359,16 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 			let provider = ctx.model?.provider;
 			let modelId = ctx.model?.id;
 			// OMP has no model_select event. Observe its public current-model
-			// getter without replacing the host footer or fetching on every tick.
+			// getter, and refresh on a real change: a cached window older than the
+			// shared TTL would otherwise render as stale until the next turn. A
+			// fresh cache still short-circuits the fetch, and the shared lock keeps
+			// rapid switching to at most one network read per TTL window.
 			modelPoll = setInterval(() => {
 				if (provider === ctx.model?.provider && modelId === ctx.model?.id) return;
 				provider = ctx.model?.provider;
 				modelId = ctx.model?.id;
-				void refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model, { readOnly: true }).catch(
-					() => log.debug("quota model-switch refresh failed"),
+				void refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model).catch(() =>
+					log.debug("quota model-switch refresh failed"),
 				);
 			}, 500);
 			modelPoll.unref();

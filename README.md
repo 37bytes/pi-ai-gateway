@@ -37,6 +37,11 @@ a stale observation for another provider/model does not hide fresh capacity.
 Expired client-cache fallbacks and passed valid reset timestamps are marked
 stale; invalid or missing reset timestamps are not guessed. Legacy quota without
 explicit window states still honors the server's whole-document stale hint.
+Selecting a different model re-reads the scoped cache immediately and, when that
+window has aged past the shared 15 s TTL, refreshes it once, so a switch shows
+the new model's real capacity instead of the previous cache's `stale` marker.
+Repeated switches inside the same TTL window reuse the refreshed data and make no
+further request; switching never becomes a fetch storm.
 
 ## How the numbers get here
 

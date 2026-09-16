@@ -62,12 +62,28 @@ const staleOtherProvider: UsageAccount = {
 	unavailable: true,
 	groups: [{ ...freshWindow, state: "stale", remainingFraction: null }],
 };
+/** Second connector used to observe a real model switch. */
+const switchProviderId = "33333333-3333-4333-8333-333333333333";
+const switchModelId = "deepseek-chat";
+const switchAccount: UsageAccount = {
+	...freshAccount,
+	provider: "deepseek",
+	providerId: switchProviderId,
+	account: "opaque-c",
+	authIndex: "opaque-c",
+	groups: [{ ...freshWindow, remainingFraction: 0.61 }],
+};
+function delay(ms: number): Promise<void> {
+	const { promise, resolve } = Promise.withResolvers<void>();
+	setTimeout(resolve, ms);
+	return promise;
+}
 const usage: UsageDocument = {
 	schemaVersion: 1,
 	generatedAt: new Date(initialTime).toISOString(),
 	unsupportedProviders: [],
 	cache: { updatedAt: new Date(initialTime).toISOString(), stale: true, ttlMs: 120_000 },
-	accounts: [freshAccount, staleOtherProvider],
+	accounts: [freshAccount, staleOtherProvider, switchAccount],
 };
 const cfg = {
 	proxy: { endpoint: "https://freshness.test/v1", apiKey: "fixture-key-a", providerPrefix: "" },
@@ -100,6 +116,24 @@ const discovery = {
 			contextWindow: 1_050_000,
 			maxTokens: 128_000,
 			cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+		},
+		{
+			id: `deepseek/${switchModelId}`,
+			wireId: `deepseek/${switchModelId}`,
+			selectorId: switchModelId,
+			canonicalModel: switchModelId,
+			providerId: switchProviderId,
+			providerKind: "deepseek",
+			suggestedProviderName: "deepseek",
+			api: "openai-completions",
+			name: "DeepSeek Chat",
+			metadataState: "catalog",
+			priceState: "known",
+			reasoning: false,
+			input: ["text"],
+			contextWindow: 128_000,
+			maxTokens: 8_192,
+			cost: { input: 1, output: 2 },
 		},
 	],
 };
@@ -318,6 +352,26 @@ try {
 	const freshReads = usageReads;
 	assert.match((await emit("before_agent_start"))!, /7d .* 37/);
 	assert.equal(usageReads, freshReads, "same authority may reuse a fresh shared cache");
+
+	// A real model switch must refresh an aged window instead of leaving the
+	// footer on the previous cache, and must reuse a window refreshed moments ago.
+	const switchReads = usageReads;
+	assert.match((await emit("session_start"))!, /7d .* 37/);
+	now += USAGE_CACHE_TTL_MS;
+	ctx.model = { provider: "deepseek", id: switchModelId };
+	await delay(900);
+	assert.equal(usageReads, switchReads + 1, "a model switch refreshes an aged shared cache once");
+	assert.match(status!, /7d .* 61/, "the switched model shows its own connector window");
+	assert.doesNotMatch(status!, /stale/);
+	ctx.model = { provider: "codex", id: modelId };
+	await delay(900);
+	assert.equal(
+		usageReads,
+		switchReads + 1,
+		"a switch inside the refreshed window must not refetch",
+	);
+	assert.match(status!, /7d .* 37/);
+	await emit("session_shutdown");
 
 	failUsage = true;
 	writeFileSync(
