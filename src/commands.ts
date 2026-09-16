@@ -4,12 +4,9 @@
 //
 // Refresh, usage, and diagnostics are now actions/tabs inside the hub.
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 
-import { applyAll } from "./apply.ts";
+import { applyAll, requireGatewayTransport } from "./apply.ts";
 import { loadConfig, resolveConfigValue } from "./config.ts";
 import { fetchDiscovery } from "./fetch-models.ts";
 import { clearUsageCache } from "./fetch-usage.ts";
@@ -18,14 +15,12 @@ import { runSetup } from "./ui-setup.ts";
 
 export function registerCommands(pi: ExtensionAPI): void {
 	pi.registerCommand("cliproxy", {
-		description:
-			"Manage proxy models, usage, and diagnostics in one hub overlay",
+		description: "Manage proxy models, usage, and diagnostics in one hub overlay",
 		handler: handleCliproxy.bind(null, pi),
 	});
 
 	pi.registerCommand("cliproxy-setup", {
-		description:
-			"Set endpoint, API key, and (optional) usage key for the proxy",
+		description: "Set endpoint, API key, and (optional) usage key for the proxy",
 		handler: handleSetup.bind(null, pi),
 	});
 }
@@ -37,12 +32,15 @@ async function handleCliproxy(
 	_args: string,
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
+	try {
+		await requireGatewayTransport();
+	} catch (error) {
+		ctx.ui.notify((error as Error).message, "error");
+		return;
+	}
 	const cfg = loadConfig();
 	if (!cfg.proxy.endpoint || !resolveConfigValue(cfg.proxy.apiKey)) {
-		ctx.ui.notify(
-			"endpoint or API key not set \u2014 launching setup first",
-			"info",
-		);
+		ctx.ui.notify("endpoint or API key not set \u2014 launching setup first", "info");
 		const ok = await runSetup(ctx, true);
 		if (!ok) return;
 	}
@@ -65,15 +63,18 @@ async function handleSetup(
 	_args: string,
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
+	try {
+		await requireGatewayTransport();
+	} catch (error) {
+		ctx.ui.notify((error as Error).message, "error");
+		return;
+	}
 	const ok = await runSetup(ctx, true);
 	if (!ok) return;
 	// After saving, eagerly reapply so the new endpoint/key actually takes effect.
 	const cfg = loadConfig();
 	try {
-		const discovery = await fetchDiscovery(
-			cfg,
-			resolveConfigValue(cfg.proxy.apiKey),
-		);
+		const discovery = await fetchDiscovery(cfg, resolveConfigValue(cfg.proxy.apiKey));
 		const rep = await applyAll(pi, cfg, discovery);
 		clearUsageCache();
 		ctx.ui.notify(
@@ -81,9 +82,6 @@ async function handleSetup(
 			"info",
 		);
 	} catch (err) {
-		ctx.ui.notify(
-			`setup saved, but apply failed: ${(err as Error).message}`,
-			"warning",
-		);
+		ctx.ui.notify(`setup saved, but apply failed: ${(err as Error).message}`, "warning");
 	}
 }

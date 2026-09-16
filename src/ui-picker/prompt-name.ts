@@ -1,12 +1,7 @@
 // "+ new custom group" prompt overlay.
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-	type Component,
-	getKeybindings,
-	Input,
-	matchesKey,
-} from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { type Component, getKeybindings, Input, matchesKey } from "@oh-my-pi/pi-tui";
 
 import { withProviderPrefix } from "../compat.ts";
 import { frame, frameInner } from "../ui-frame.ts";

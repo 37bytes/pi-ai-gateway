@@ -2,7 +2,7 @@
 // When /.well-known/pi succeeds, we trust the server. This module is the
 // secondary classifier (/v1/models path) and a couple of small utilities.
 
-import type { Api } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
 
 import type { CustomProviderModelConfig } from "./config.ts";
 
@@ -39,15 +39,15 @@ export function isExcluded(id: string, patterns: string[]): boolean {
 
 /** Provider namespaces come from discovery; never rename cloud providers. */
 
-export function withProviderPrefix(
-	prefix: string | undefined,
-	suffix: string,
-): string {
+export function withProviderPrefix(prefix: string | undefined, suffix: string): string {
 	const p = (prefix ?? "").trim();
 	return p ? `${p}-${suffix}` : suffix;
 }
 
-export function normalizeSuggestedProvider(suggestedProvider: string, prefix: string | undefined): string {
+export function normalizeSuggestedProvider(
+	suggestedProvider: string,
+	prefix: string | undefined,
+): string {
 	return withProviderPrefix(prefix, suggestedProvider.trim());
 }
 

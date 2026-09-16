@@ -4,21 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cacheScope } from "../src/cache-scope.ts";
 
-const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-child-"));
+const home = process.env.PI_GATEWAY_TEST_HOME!;
+assert.ok(home && process.env.HOME === home, "Run through scripts/run-isolated.ts");
 const originalHome = process.env.HOME;
 const originalArgv = [...process.argv];
 const originalFetch = globalThis.fetch;
 
 try {
 	process.env.HOME = home;
-	process.argv.splice(
-		2,
-		process.argv.length - 2,
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-	);
+	process.argv.splice(2, process.argv.length - 2, "--mode", "json", "-p", "--no-session");
 
 	const configDir = join(home, ".pi", "agent", "ai-gateway");
 	mkdirSync(configDir, { recursive: true });

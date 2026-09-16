@@ -5,15 +5,8 @@
 //   global keys: [ ] / 1 2 3 switch tab \u00b7 r refresh \u00b7 e setup \u00b7 s save \u00b7 q close
 //   per-view keys: see each view's footerHint()
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
-import {
-	type Component,
-	getKeybindings,
-	matchesKey,
-} from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { type Component, getKeybindings, matchesKey } from "@oh-my-pi/pi-tui";
 
 import { applyAll } from "../apply.ts";
 import type { ProxyConfig } from "../config.ts";
@@ -40,9 +33,7 @@ export interface HubDeps {
 	done: () => void;
 }
 
-export function buildHub(
-	deps: HubDeps,
-): Component & { handleInput(data: string): void } {
+export function buildHub(deps: HubDeps): Component & { handleInput(data: string): void } {
 	const { pi, ctx, tui, theme, cfg, done } = deps;
 	let discovery = deps.discovery;
 	let dirty = false; // unsaved config changes
@@ -137,13 +128,8 @@ export function buildHub(
 		if (cfg.registerAll) {
 			// Every discovery provider/model is registered automatically.
 			provCount = discovery.builtinProviders.length;
-			modelCount = discovery.builtinProviders.reduce(
-				(n, p) => n + p.models.length,
-				0,
-			);
-			const groups = new Set(
-				discovery.customPool.map((m) => m.suggestedProvider),
-			);
+			modelCount = discovery.builtinProviders.reduce((n, p) => n + p.models.length, 0);
+			const groups = new Set(discovery.customPool.map((m) => m.suggestedProvider));
 			provCount += groups.size;
 			modelCount += discovery.customPool.length;
 		} else {
@@ -200,8 +186,7 @@ export function buildHub(
 			lines,
 			footer: {
 				hint: active().footerHint(),
-				badge:
-					" [ ] tab \u00b7 r refresh \u00b7 e setup \u00b7 s save \u00b7 q close ",
+				badge: " [ ] tab \u00b7 r refresh \u00b7 e setup \u00b7 s save \u00b7 q close ",
 			},
 		});
 	};

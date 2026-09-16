@@ -44,30 +44,17 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { Api } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
 
 import { log } from "./log.ts";
 
 export const CONFIG_DIR = join(homedir(), ".pi", "agent", "ai-gateway");
 export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
-const UPSTREAM_CONFIG_PATH = join(
-	homedir(),
-	".pi",
-	"agent",
-	"pi-cliproxyapi",
-	"config.json",
-);
-const LEGACY_CONFIG_PATH = join(
-	homedir(),
-	".config",
-	"pi-cliproxyapi",
-	"config.json",
-);
+const UPSTREAM_CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-cliproxyapi", "config.json");
+const LEGACY_CONFIG_PATH = join(homedir(), ".config", "pi-cliproxyapi", "config.json");
 
 export function isLocalCheckout(): boolean {
-	return existsSync(
-		join(dirname(fileURLToPath(import.meta.url)), "..", ".git"),
-	);
+	return existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".git"));
 }
 
 function migrateConfig(
@@ -212,31 +199,18 @@ function normalizeConfig(raw: unknown): ProxyConfig {
 	const merged = structuredClone(DEFAULT_CONFIG);
 	const proxyBlock = (r.proxy as Record<string, unknown> | undefined) ?? {};
 	merged.proxy.endpoint =
-		typeof proxyBlock.endpoint === "string"
-			? proxyBlock.endpoint
-			: merged.proxy.endpoint;
-	merged.proxy.apiKey =
-		typeof proxyBlock.apiKey === "string" ? proxyBlock.apiKey : "";
-	if (typeof proxyBlock.usageKey === "string")
-		merged.proxy.usageKey = proxyBlock.usageKey;
-	if (
-		typeof proxyBlock.providerPrefix === "string" &&
-		proxyBlock.providerPrefix.trim()
-	) {
+		typeof proxyBlock.endpoint === "string" ? proxyBlock.endpoint : merged.proxy.endpoint;
+	merged.proxy.apiKey = typeof proxyBlock.apiKey === "string" ? proxyBlock.apiKey : "";
+	if (typeof proxyBlock.usageKey === "string") merged.proxy.usageKey = proxyBlock.usageKey;
+	if (typeof proxyBlock.providerPrefix === "string" && proxyBlock.providerPrefix.trim()) {
 		merged.proxy.providerPrefix = proxyBlock.providerPrefix.trim();
 	}
 
 	if (r.builtinProviders && typeof r.builtinProviders === "object") {
-		merged.builtinProviders = r.builtinProviders as Record<
-			string,
-			BuiltinProviderConfig
-		>;
+		merged.builtinProviders = r.builtinProviders as Record<string, BuiltinProviderConfig>;
 	}
 	if (r.customProviders && typeof r.customProviders === "object") {
-		merged.customProviders = r.customProviders as Record<
-			string,
-			CustomProviderConfig
-		>;
+		merged.customProviders = r.customProviders as Record<string, CustomProviderConfig>;
 	}
 	if (typeof r.registerAll === "boolean") merged.registerAll = r.registerAll;
 	if (Array.isArray(r.discoveryExcludes)) {
@@ -245,15 +219,11 @@ function normalizeConfig(raw: unknown): ProxyConfig {
 		);
 	}
 	if (r.overrides && typeof r.overrides === "object") {
-		merged.overrides = r.overrides as Record<
-			string,
-			Partial<CustomProviderModelConfig>
-		>;
+		merged.overrides = r.overrides as Record<string, Partial<CustomProviderModelConfig>>;
 	}
 	if (typeof r.refreshIntervalMinutes === "number")
 		merged.refreshIntervalMinutes = r.refreshIntervalMinutes;
-	if (typeof r.usageCacheTtlMs === "number")
-		merged.usageCacheTtlMs = r.usageCacheTtlMs;
+	if (typeof r.usageCacheTtlMs === "number") merged.usageCacheTtlMs = r.usageCacheTtlMs;
 	return merged;
 }
 

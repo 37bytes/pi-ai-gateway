@@ -2,7 +2,7 @@
 // Built synchronously from the config + the discovery already fetched by the
 // hub, plus a read-only conflict scan.
 
-import { matchesKey } from "@earendil-works/pi-tui";
+import { matchesKey } from "@oh-my-pi/pi-tui";
 
 import type { ProxyConfig } from "../config.ts";
 import { resolveConfigValue } from "../config.ts";
@@ -31,9 +31,7 @@ export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
 		const dim = (s: string) => theme.fg("dim", s);
 		const lines: string[] = [];
 
-		lines.push(
-			`${dim("endpoint")}      ${cfg.proxy.endpoint || bad("(unset)")}`,
-		);
+		lines.push(`${dim("endpoint")}      ${cfg.proxy.endpoint || bad("(unset)")}`);
 		lines.push(
 			`${dim("apiKey")}        ${resolveConfigValue(cfg.proxy.apiKey) ? ok("resolves") : bad("empty after resolution")}`,
 		);
@@ -53,9 +51,7 @@ export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
 			`${dim("upstream")}      v=${d.upstreamVersion ?? "(unknown)"} \u00b7 ${d.upstreamTotal} ids`,
 		);
 		const builtins =
-			d.builtinProviders
-				.map((p) => `${p.name}=${p.models.length}`)
-				.join(", ") || dim("(none)");
+			d.builtinProviders.map((p) => `${p.name}=${p.models.length}`).join(", ") || dim("(none)");
 		lines.push(`${dim("built-in")}      ${builtins}`);
 		lines.push(`${dim("custom pool")}   ${d.customPool.length} models`);
 
@@ -65,8 +61,7 @@ export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
 			lines.push(`${dim("conflicts")}     ${ok("none")}`);
 		} else {
 			lines.push(`${dim("conflicts")}`);
-			for (const c of conflicts)
-				lines.push(`  ${theme.fg("warning", `[${c.kind}]`)} ${c.detail}`);
+			for (const c of conflicts) lines.push(`  ${theme.fg("warning", `[${c.kind}]`)} ${c.detail}`);
 		}
 		return lines;
 	};

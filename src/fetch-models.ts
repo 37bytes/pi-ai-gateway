@@ -8,14 +8,9 @@
 // fetchDiscovery() returns a normalized in-memory model. Callers shouldn't
 // know which path was used (except for logging).
 
-import type { Api } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
 
-import {
-	classifyCustom,
-	isExcluded,
-	modelDefaults,
-	normalizeSuggestedProvider,
-} from "./compat.ts";
+import { classifyCustom, isExcluded, modelDefaults, normalizeSuggestedProvider } from "./compat.ts";
 import { PLUGIN_USER_AGENT } from "./bridge.ts";
 
 import { writeDiscoveryCache } from "./cache.ts";
@@ -40,7 +35,15 @@ export interface DiscoveryModelEntry {
 		snapshotId: string;
 		revision: number;
 		sourceVersion: string;
-		rules: Array<{ dimension: string; priceKind: string; minContextTokens?: number; amount: string; unit: string; currency: string; source: string }>;
+		rules: Array<{
+			dimension: string;
+			priceKind: string;
+			minContextTokens?: number;
+			amount: string;
+			unit: string;
+			currency: string;
+			source: string;
+		}>;
 	};
 	name: string;
 	reasoning?: boolean;
@@ -85,15 +88,9 @@ interface RawUpstreamModel extends Partial<DiscoveryModelEntry> {
 
 // --------------------------------------------------------------------------- HTTP
 
-async function fetchWithTimeout(
-	url: string,
-	init: RequestInit,
-): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
 	const ctrl = new AbortController();
-	const timer = setTimeout(
-		() => ctrl.abort(new Error("timeout")),
-		REQUEST_TIMEOUT_MS,
-	);
+	const timer = setTimeout(() => ctrl.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);
 	try {
 		return await fetch(url, { ...init, signal: ctrl.signal });
 	} finally {
@@ -118,8 +115,7 @@ function discoveryUrl(endpoint: string): string | null {
 /** Model catalogue served by the AGP-native pi-bridge compatibility façade. */
 const PLUGIN_DISCOVERY_PATH = "/v0/resource/plugins/pi-bridge/well-known";
 /** Path used while the plugin was in testing; kept for older deployments. */
-const PLUGIN_DISCOVERY_PATH_LEGACY =
-	"/v0/resource/plugins/pi-bridge/dev/well-known";
+const PLUGIN_DISCOVERY_PATH_LEGACY = "/v0/resource/plugins/pi-bridge/dev/well-known";
 
 // --------------------------------------------------------------------------- well-known path
 
@@ -209,7 +205,10 @@ async function tryDiscoverySource(
 			api: (m.api as Api) ?? "openai-completions",
 			suggestedProvider: m.providerId
 				? String(m.suggestedProviderName ?? "").trim()
-				: normalizeSuggestedProvider(String(m.suggestedProviderName ?? "misc"), cfg.proxy.providerPrefix),
+				: normalizeSuggestedProvider(
+						String(m.suggestedProviderName ?? "misc"),
+						cfg.proxy.providerPrefix,
+					),
 			ownedBy: typeof m.owned_by === "string" ? m.owned_by : "",
 		}),
 	);
@@ -227,23 +226,15 @@ async function tryDiscoverySource(
 		builtinProviders: builtin,
 		customPool,
 		serverDiscoveryExcludes: Array.isArray(body.discoveryExcludes)
-			? body.discoveryExcludes.filter(
-					(s: unknown): s is string => typeof s === "string",
-				)
+			? body.discoveryExcludes.filter((s: unknown): s is string => typeof s === "string")
 			: [],
-		upstreamTotal:
-			typeof body?.counts?.upstreamTotal === "number"
-				? body.counts.upstreamTotal
-				: 0,
+		upstreamTotal: typeof body?.counts?.upstreamTotal === "number" ? body.counts.upstreamTotal : 0,
 	};
 }
 
 // --------------------------------------------------------------------------- /v1/models path
 
-async function fetchRawModels(
-	cfg: ProxyConfig,
-	resolvedKey: string,
-): Promise<RawUpstreamModel[]> {
+async function fetchRawModels(cfg: ProxyConfig, resolvedKey: string): Promise<RawUpstreamModel[]> {
 	const origin = endpointOrigin(cfg.proxy.endpoint);
 	if (!origin) {
 		throw new Error("proxy.endpoint is not a valid URL");
@@ -283,28 +274,23 @@ function classifyLocally(raw: RawUpstreamModel[], cfg: ProxyConfig): Discovery {
 		if (isExcluded(m.id, excludes)) continue;
 		if (m.providerId) {
 			if (!m.id.includes("/") || !m.selectorId || !m.suggestedProviderName || !m.api) continue;
-			customPool.push({ ...normalizeModel(m), api: m.api, suggestedProvider: m.suggestedProviderName.trim(), ownedBy: m.owned_by });
+			customPool.push({
+				...normalizeModel(m),
+				api: m.api,
+				suggestedProvider: m.suggestedProviderName.trim(),
+				ownedBy: m.owned_by,
+			});
 			continue;
 		}
 
 		if (m.owned_by === "openai") {
 			const entry = modelDefaults(m.id);
-			pushBuiltin(
-				builtinByName,
-				"openai",
-				"openai-responses",
-				entryToDiscovery(entry),
-			);
+			pushBuiltin(builtinByName, "openai", "openai-responses", entryToDiscovery(entry));
 			continue;
 		}
 		if (m.owned_by === "anthropic") {
 			const entry = modelDefaults(m.id);
-			pushBuiltin(
-				builtinByName,
-				"anthropic",
-				"anthropic-messages",
-				entryToDiscovery(entry),
-			);
+			pushBuiltin(builtinByName, "anthropic", "anthropic-messages", entryToDiscovery(entry));
 			continue;
 		}
 		const { slug, api } = classifyCustom(m.owned_by, cfg.proxy.providerPrefix);
@@ -341,28 +327,46 @@ function pushBuiltin(
 	p.models.push(entry);
 }
 
-function entryToDiscovery(
-	base: ReturnType<typeof modelDefaults>,
-): DiscoveryModelEntry {
+function entryToDiscovery(base: ReturnType<typeof modelDefaults>): DiscoveryModelEntry {
 	return normalizeModel(base);
 }
 
 /** Omit unknown values rather than promoting inference defaults into facts. */
 function normalizeModel(m: Partial<DiscoveryModelEntry> & { id: string }): DiscoveryModelEntry {
 	const id = String(m.id);
-	const metadataState = m.metadataState === "unknown" || m.metadataState === "override" || m.metadataState === "catalog"
-		? m.metadataState
-		: [m.contextWindow, m.maxTokens, m.reasoning, m.input].some((v) => v !== undefined) ? "catalog" : "unknown";
+	const metadataState =
+		m.metadataState === "unknown" || m.metadataState === "override" || m.metadataState === "catalog"
+			? m.metadataState
+			: [m.contextWindow, m.maxTokens, m.reasoning, m.input].some((v) => v !== undefined)
+				? "catalog"
+				: "unknown";
 	const cost: NonNullable<DiscoveryModelEntry["cost"]> = {};
 	if (m.priceState !== "unknown") {
 		for (const dimension of ["input", "output", "cacheRead", "cacheWrite"] as const) {
 			const value = m.cost?.[dimension];
-			if (typeof value === "number" && Number.isFinite(value) && value >= 0) cost[dimension] = value;
+			if (typeof value === "number" && Number.isFinite(value) && value >= 0)
+				cost[dimension] = value;
 		}
 	}
-	const priceState = cost.input !== undefined && cost.output !== undefined ? "known" : Object.keys(cost).length ? "partial" : "unknown";
-	const entry: DiscoveryModelEntry = { id, name: typeof m.name === "string" ? m.name : id, metadataState, priceState };
-	for (const key of ["wireId", "selectorId", "providerId", "providerKind", "canonicalModel"] as const) {
+	const priceState =
+		cost.input !== undefined && cost.output !== undefined
+			? "known"
+			: Object.keys(cost).length
+				? "partial"
+				: "unknown";
+	const entry: DiscoveryModelEntry = {
+		id,
+		name: typeof m.name === "string" ? m.name : id,
+		metadataState,
+		priceState,
+	};
+	for (const key of [
+		"wireId",
+		"selectorId",
+		"providerId",
+		"providerKind",
+		"canonicalModel",
+	] as const) {
 		if (typeof m[key] === "string" && m[key]) entry[key] = m[key];
 	}
 	if (entry.wireId && entry.wireId !== id) throw new Error(`Conflicting gateway route for ${id}`);
@@ -384,10 +388,7 @@ function normalizeModel(m: Partial<DiscoveryModelEntry> & { id: string }): Disco
 
 // --------------------------------------------------------------------------- public
 
-export async function fetchDiscovery(
-	cfg: ProxyConfig,
-	resolvedKey: string,
-): Promise<Discovery> {
+export async function fetchDiscovery(cfg: ProxyConfig, resolvedKey: string): Promise<Discovery> {
 	const scope = cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT);
 	const wk = await tryWellKnown(cfg, resolvedKey);
 	if (wk) {

@@ -7,7 +7,7 @@
 // but more muted (\u00b7 dim) \u2014 this gives users a hint where focus is
 // without losing track of selection across panels.
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import type { ProxyConfig } from "../config.ts";
 import { pad, truncateAnsi } from "./render-text.ts";
@@ -20,11 +20,7 @@ interface RowCtx {
 	isFocused: boolean;
 }
 
-function cursorMark(
-	theme: Theme,
-	isCursor: boolean,
-	isFocused: boolean,
-): string {
+function cursorMark(theme: Theme, isCursor: boolean, isFocused: boolean): string {
 	if (!isCursor) return "  ";
 	if (isFocused) return theme.fg("accent", "\u25b6 ");
 	return theme.fg("muted", "\u25b8 ");
@@ -39,11 +35,7 @@ function fitLine(line: string, width: number): string {
 
 // --------------------------------------------------------------------------- left panel rows
 
-export function renderProviderRow(
-	p: ProviderEntry,
-	cfg: ProxyConfig,
-	ctx: RowCtx,
-): string {
+export function renderProviderRow(p: ProviderEntry, cfg: ProxyConfig, ctx: RowCtx): string {
 	const { theme, width, isCursor, isFocused } = ctx;
 	const mark = cursorMark(theme, isCursor, isFocused);
 	const count =
@@ -51,16 +43,12 @@ export function renderProviderRow(
 			? (cfg.builtinProviders[p.name]?.models.length ?? 0)
 			: (cfg.customProviders[p.name]?.models.length ?? 0);
 
-	const tag =
-		p.kind === "builtin" ? theme.fg("accent", "B") : theme.fg("warning", "C");
+	const tag = p.kind === "builtin" ? theme.fg("accent", "B") : theme.fg("warning", "C");
 	const tagBracket = `${theme.fg("dim", "[")}${tag}${theme.fg("dim", "]")}`;
 
-	const dot =
-		count > 0 ? theme.fg("success", "\u25cf") : theme.fg("dim", "\u25cb");
+	const dot = count > 0 ? theme.fg("success", "\u25cf") : theme.fg("dim", "\u25cb");
 	const countStr =
-		count > 0
-			? theme.fg("success", String(count).padStart(2))
-			: theme.fg("dim", " 0");
+		count > 0 ? theme.fg("success", String(count).padStart(2)) : theme.fg("dim", " 0");
 
 	const name =
 		isCursor && isFocused
@@ -100,10 +88,7 @@ export function renderModelRow(
 	const { theme, width, isCursor, isFocused } = ctx;
 	const mark = cursorMark(theme, isCursor, isFocused);
 
-	const box =
-		side === "assigned"
-			? theme.fg("success", "\u2611")
-			: theme.fg("dim", "\u2610");
+	const box = side === "assigned" ? theme.fg("success", "\u2611") : theme.fg("dim", "\u2610");
 
 	const warn = compatWarn ? ` ${theme.fg("warning", "\u26a0")}` : "";
 	const idStr = isCursor && isFocused ? theme.fg("accent", id) : id;
@@ -118,22 +103,14 @@ export function renderModelRow(
 
 // --------------------------------------------------------------------------- panel subheaders
 
-export function renderSubheader(
-	theme: Theme,
-	label: string,
-	width: number,
-): string {
+export function renderSubheader(theme: Theme, label: string, width: number): string {
 	// Compact "── label ──" tag, not a full-width rule. We don't want it to
 	// look like another panel frame.
 	const tag = `${theme.fg("borderAccent", "\u2500\u2500")} ${theme.fg("warning", label)} ${theme.fg("borderAccent", "\u2500\u2500")}`;
 	return pad(`  ${tag}`, width);
 }
 
-export function renderEmpty(
-	theme: Theme,
-	label: string,
-	width: number,
-): string {
+export function renderEmpty(theme: Theme, label: string, width: number): string {
 	return pad(`  ${theme.fg("dim", label)}`, width);
 }
 
@@ -144,8 +121,6 @@ export function renderPanelHeader(
 	width: number,
 	isFocused: boolean,
 ): string {
-	const prefix = isFocused
-		? theme.bold(theme.fg("accent", "\u275a "))
-		: theme.fg("dim", "  ");
+	const prefix = isFocused ? theme.bold(theme.fg("accent", "\u275a ")) : theme.fg("dim", "  ");
 	return pad(`${prefix}${text}`, width);
 }

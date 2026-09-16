@@ -9,8 +9,8 @@
 // the exact order the renderer iterates. The highlighted row therefore always
 // maps to the model that gets toggled.
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { matchesKey } from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { matchesKey } from "@oh-my-pi/pi-tui";
 
 import type { ProxyConfig } from "../config.ts";
 import type { Discovery } from "../fetch-models.ts";
@@ -86,14 +86,11 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	};
 
 	// ----- pool ordering (single source of truth) ---------------------------
-	const poolGroups = (
-		prov: ProviderEntry,
-	): Array<{ label: string; ids: string[] }> => {
+	const poolGroups = (prov: ProviderEntry): Array<{ label: string; ids: string[] }> => {
 		const ids = filterModelIds(poolFor(cfg, prov, catalog), catalog, filter);
 		return groupPoolByOwnedBy(ids, catalog);
 	};
-	const poolOrder = (prov: ProviderEntry): string[] =>
-		poolGroups(prov).flatMap((g) => g.ids);
+	const poolOrder = (prov: ProviderEntry): string[] => poolGroups(prov).flatMap((g) => g.ids);
 
 	const refresh = (): void => {
 		providers = collectProviders(cfg, catalog);
@@ -117,9 +114,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	const onTab = (back: boolean): void => {
 		const order: PanelId[] = ["providers", "assigned", "pool"];
 		const i = order.indexOf(focus);
-		focus = back
-			? order[(i - 1 + order.length) % order.length]!
-			: order[(i + 1) % order.length]!;
+		focus = back ? order[(i - 1 + order.length) % order.length]! : order[(i + 1) % order.length]!;
 	};
 
 	const moveCursor = (delta: number): void => {
@@ -150,9 +145,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 					cfg.customProviders[name] = { api: "openai-completions", models: [] };
 					onChange();
 					refresh();
-					providerCursor = providers.findIndex(
-						(p) => p.kind === "custom" && p.name === name,
-					);
+					providerCursor = providers.findIndex((p) => p.kind === "custom" && p.name === name);
 					if (providerCursor < 0) providerCursor = providers.length - 1;
 					focus = "pool";
 				}
@@ -194,14 +187,12 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 		delete cfg.customProviders[prov.name];
 		onChange();
 		refresh();
-		if (providerCursor >= providers.length)
-			providerCursor = Math.max(0, providers.length - 1);
+		if (providerCursor >= providers.length) providerCursor = Math.max(0, providers.length - 1);
 		tui.requestRender();
 	};
 
 	// ----- render -----------------------------------------------------------
-	const render = (width: number, height: number): string[] =>
-		renderBody(width, height);
+	const render = (width: number, height: number): string[] => renderBody(width, height);
 
 	function renderBody(width: number, height: number): string[] {
 		const inner = Math.max(70, width);
@@ -212,15 +203,10 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 			const dim = (s: string) => theme.fg("dim", s);
 			const lines: string[] = [];
 			lines.push(
-				theme.fg(
-					"success",
-					"registerAll \u2713 every gateway provider/model is registered",
-				),
+				theme.fg("success", "registerAll \u2713 every gateway provider/model is registered"),
 			);
 			for (const p of d.builtinProviders) {
-				lines.push(
-					`  ${pad(p.name, 18)} ${p.models.length} models \u00b7 ${p.api}`,
-				);
+				lines.push(`  ${pad(p.name, 18)} ${p.models.length} models \u00b7 ${p.api}`);
 			}
 			const groups = new Map<string, number>();
 			for (const m of d.customPool) {
@@ -229,9 +215,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 			for (const [slug, n] of [...groups.entries()].sort()) {
 				lines.push(`  ${pad(slug, 18)} ${n} models \u00b7 custom pool`);
 			}
-			lines.push(
-				dim("disable registerAll in config.json to edit the allowlist manually"),
-			);
+			lines.push(dim("disable registerAll in config.json to edit the allowlist manually"));
 			for (let i = lines.length; i < height; i++) lines.push("");
 			return lines.slice(0, height).map((l) => pad(l, width));
 		}
@@ -270,15 +254,12 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 			);
 		}
 		{
-			const isCursor =
-				focus === "providers" && providerCursor === providers.length;
+			const isCursor = focus === "providers" && providerCursor === providers.length;
 			if (isCursor) {
 				leftCursorLine = leftLines.length;
 				leftCursorTop = leftCursorLine;
 			}
-			leftLines.push(
-				renderNewProviderRow(theme, isCursor, focus === "providers", leftW),
-			);
+			leftLines.push(renderNewProviderRow(theme, isCursor, focus === "providers", leftW));
 		}
 
 		// RIGHT TOP — assigned
@@ -286,18 +267,12 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 		const assignedHeader = prov
 			? `assigned to ${theme.bold(prov.name)}  ${theme.fg("dim", `\u00b7 ${prov.api}`)}`
 			: theme.fg("dim", "no provider selected");
-		assignedLines.push(
-			panelHeaderBar(" assigned ", rightW, focus === "assigned"),
-		);
-		assignedLines.push(
-			renderPanelHeader(theme, assignedHeader, rightW, focus === "assigned"),
-		);
+		assignedLines.push(panelHeaderBar(" assigned ", rightW, focus === "assigned"));
+		assignedLines.push(renderPanelHeader(theme, assignedHeader, rightW, focus === "assigned"));
 		if (prov) {
 			const ids = assignedIdsFor(cfg, prov);
 			if (ids.length === 0)
-				assignedLines.push(
-					renderEmpty(theme, "(nothing assigned yet)", rightW),
-				);
+				assignedLines.push(renderEmpty(theme, "(nothing assigned yet)", rightW));
 			for (let i = 0; i < ids.length; i++) {
 				const id = ids[i]!;
 				const m = catalog.byId.get(id);
@@ -345,9 +320,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 							poolCursorLine = poolLines.length;
 							poolCursorTop = gi === 0 ? groupHeaderLine : poolCursorLine;
 						}
-						const compatWarn = m
-							? !apiCompatible(prov.api, m.suggestedApi)
-							: false;
+						const compatWarn = m ? !apiCompatible(prov.api, m.suggestedApi) : false;
 						poolLines.push(
 							renderModelRow(id, m, "pool", compatWarn, {
 								theme,
@@ -413,14 +386,8 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 		return out;
 	}
 
-	function panelHeaderBar(
-		label: string,
-		width: number,
-		isFocused: boolean,
-	): string {
-		const bar = isFocused
-			? theme.bold(theme.fg("accent", label))
-			: theme.fg("muted", label);
+	function panelHeaderBar(label: string, width: number, isFocused: boolean): string {
+		const bar = isFocused ? theme.bold(theme.fg("accent", label)) : theme.fg("muted", label);
 		const fill = theme.fg(
 			"borderAccent",
 			"\u2500".repeat(Math.max(0, width - visibleWidth(label) - 1)),
@@ -430,9 +397,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 
 	function poolHeaderBar(width: number, isFocused: boolean): string {
 		const label = " available pool ";
-		const bar = isFocused
-			? theme.bold(theme.fg("accent", label))
-			: theme.fg("muted", label);
+		const bar = isFocused ? theme.bold(theme.fg("accent", label)) : theme.fg("muted", label);
 		let filterChip = "";
 		if (filterEditing) {
 			filterChip = `${theme.fg("dim", " /")}${theme.fg("accent", filter)}${theme.fg("accent", "\u2588")} `;
@@ -440,10 +405,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 			filterChip = `${theme.fg("dim", " /")}${theme.fg("warning", filter)} `;
 		}
 		const used = visibleWidth(label) + visibleWidth(filterChip);
-		const fill = theme.fg(
-			"borderAccent",
-			"\u2500".repeat(Math.max(0, width - used - 1)),
-		);
+		const fill = theme.fg("borderAccent", "\u2500".repeat(Math.max(0, width - used - 1)));
 		return pad(`${bar}${filterChip}${fill}`, width);
 	}
 
@@ -488,18 +450,12 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 			filterEditing = true;
 			return true;
 		}
-		if (
-			matchesKey(data, "enter") ||
-			matchesKey(data, "return") ||
-			matchesKey(data, "space")
-		) {
+		if (matchesKey(data, "enter") || matchesKey(data, "return") || matchesKey(data, "space")) {
 			return onActivate().then(() => true);
 		}
 		if (
 			focus === "providers" &&
-			(matchesKey(data, "d") ||
-				matchesKey(data, "delete") ||
-				matchesKey(data, "backspace"))
+			(matchesKey(data, "d") || matchesKey(data, "delete") || matchesKey(data, "backspace"))
 		) {
 			return onDelete().then(() => true);
 		}
@@ -534,8 +490,7 @@ export function buildModelsView(deps: ModelsViewDeps): ModelsView {
 	function footerHint(): string {
 		if (cfg.registerAll)
 			return " all models registered from discovery \u00b7 edit config.json to change ";
-		if (filterEditing)
-			return " type to filter \u00b7 \u21b5 apply \u00b7 esc clear ";
+		if (filterEditing) return " type to filter \u00b7 \u21b5 apply \u00b7 esc clear ";
 		return " tab \u2194 panel \u00b7 \u2191\u2193 nav \u00b7 \u21b5 move \u00b7 / filter \u00b7 d remove group ";
 	}
 

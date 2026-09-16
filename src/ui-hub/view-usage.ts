@@ -1,15 +1,11 @@
 // Usage view — wraps renderUsage() in a scrollable hub tab with d/v toggles.
 // The /api/usage document is fetched lazily the first time the tab is opened.
 
-import { matchesKey } from "@earendil-works/pi-tui";
+import { matchesKey } from "@oh-my-pi/pi-tui";
 
 import type { ProxyConfig } from "../config.ts";
 import { resolveConfigValue } from "../config.ts";
-import {
-	clearUsageCache,
-	fetchUsage,
-	type UsageDocument,
-} from "../fetch-usage.ts";
+import { clearUsageCache, fetchUsage, type UsageDocument } from "../fetch-usage.ts";
 import { pad } from "../ui-picker/render-text.ts";
 import type { OverlayTui, Theme } from "../ui-picker/types.ts";
 import { renderUsage } from "../ui-usage.ts";
@@ -57,8 +53,7 @@ export function buildUsageView(deps: UsageViewDeps): UsageView {
 	const lines = (): string[] => {
 		if (status === "idle" || status === "loading")
 			return [theme.fg("dim", "  loading usage\u2026")];
-		if (status === "error")
-			return [theme.fg("error", `  usage failed: ${errMsg}`)];
+		if (status === "error") return [theme.fg("error", `  usage failed: ${errMsg}`)];
 		if (!doc) return [theme.fg("dim", "  (no data)")];
 		return renderUsage(doc, { showDisabled, verbose });
 	};

@@ -9,21 +9,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cacheScope } from "../src/cache-scope.ts";
 
-const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-all-"));
+const home = process.env.PI_GATEWAY_TEST_HOME!;
+assert.ok(home && process.env.HOME === home, "Run through scripts/run-isolated.ts");
 const originalHome = process.env.HOME;
 const originalArgv = [...process.argv];
 const originalFetch = globalThis.fetch;
 
 try {
 	process.env.HOME = home;
-	process.argv.splice(
-		2,
-		process.argv.length - 2,
-		"--mode",
-		"json",
-		"-p",
-		"--no-session",
-	);
+	process.argv.splice(2, process.argv.length - 2, "--mode", "json", "-p", "--no-session");
 
 	const configDir = join(home, ".pi", "agent", "ai-gateway");
 	mkdirSync(configDir, { recursive: true });
@@ -128,11 +122,7 @@ try {
 	} as unknown as Parameters<typeof aiGateway>[0]);
 
 	const byName = Object.fromEntries(registered.map((r) => [r.name, r]));
-	assert.deepEqual(Object.keys(byName).sort(), [
-		"chatgpt-web",
-		"openai",
-		"opencode",
-	]);
+	assert.deepEqual(Object.keys(byName).sort(), ["chatgpt-web", "openai", "opencode"]);
 	assert.equal(byName.openai?.modelCount, 2);
 	assert.equal(byName.opencode?.modelCount, 1);
 	assert.equal(byName["chatgpt-web"]?.modelCount, 2);

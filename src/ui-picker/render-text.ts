@@ -1,6 +1,6 @@
 // Low-level text utilities. Everything here is pure and ANSI-aware.
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 /** Pad a possibly-ANSI string to exactly `width` cells, truncating if needed. */
 export function pad(s: string, width: number): string {

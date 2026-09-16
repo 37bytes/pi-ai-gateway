@@ -6,6 +6,8 @@
 // pi renders as a proper [Warning]/[Error] line; the rest are dropped unless
 // debugging is explicitly enabled.
 
+import { appendFileSync } from "node:fs";
+
 const TAG = "[ai-gateway]";
 
 type Level = "info" | "warning" | "error";
@@ -64,6 +66,19 @@ function emit(level: Level, args: unknown[]): void {
 }
 
 export const log = {
+	/** Independent opt-in; never enables payload/debug logging. */
+	latency(summary: Record<string, unknown>): void {
+		if (process.env.PI_AI_GATEWAY_LATENCY !== "1") return;
+		try {
+			const file = process.env.PI_AI_GATEWAY_LATENCY_FILE;
+			if (file) appendFileSync(file, `${JSON.stringify(summary)}\n`, { mode: 0o600 });
+			else if (sink) sink.notify(`${TAG} latency ${JSON.stringify(summary)}`, "info");
+			else console.error(TAG, "latency", JSON.stringify(summary));
+		} catch {
+			// Diagnostics must never alter or fail an inference stream. Do not
+			// include filesystem errors: they can expose paths or environment data.
+		}
+	},
 	/**
 	 * Routine progress. These are the lines that used to litter the TUI, so
 	 * they are only shown when explicitly debugging.

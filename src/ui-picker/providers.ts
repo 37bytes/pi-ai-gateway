@@ -4,16 +4,13 @@
 //     still surfaces);
 //   - every custom group already declared in the user's config.
 
-import type { Api } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
+import { getBundledModels } from "@oh-my-pi/pi-catalog/models";
 
 import type { ProxyConfig } from "../config.ts";
 import type { CatalogIndex, ProviderEntry } from "./types.ts";
 
-export function collectProviders(
-	cfg: ProxyConfig,
-	catalog: CatalogIndex,
-): ProviderEntry[] {
+export function collectProviders(cfg: ProxyConfig, catalog: CatalogIndex): ProviderEntry[] {
 	const out: ProviderEntry[] = [];
 
 	const builtinNames = new Set<string>([
@@ -28,7 +25,7 @@ export function collectProviders(
 		// Pick the API: pi-ai catalog first, then proxy hint.
 		let api: Api | undefined;
 		try {
-			const localModels = getModels(name as Parameters<typeof getModels>[0]);
+			const localModels = getBundledModels(name as Parameters<typeof getBundledModels>[0]);
 			const hit = localModels.find((m) => proxyIds.includes(m.id));
 			if (hit) api = hit.api as Api;
 		} catch {

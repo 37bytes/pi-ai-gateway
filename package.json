@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.7",
+	"version": "0.4.3-agp.8",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -25,18 +25,22 @@
 	],
 	"scripts": {
 		"typecheck": "tsc --noEmit",
-		"check:migration": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/check-config-migration.ts",
-		"check:contract": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/bridge-contract.ts",
-		"check:models": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/model-contract.ts",
-		"check:quota": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/quota-freshness.ts",
-		"check:child": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/headless-child.ts",
-		"check:register-all": "node --disable-warning=ExperimentalWarning --experimental-strip-types tests/register-all.ts",
+		"check:migration": "bun scripts/run-isolated.ts scripts/check-config-migration.ts",
+		"check:contract": "bun scripts/run-isolated.ts tests/bridge-contract.ts",
+		"check:models": "bun scripts/run-isolated.ts tests/model-contract.ts",
+		"check:installed-host": "bun tests/installed-host-contract.ts",
+		"check:quota": "bun scripts/run-isolated.ts tests/quota-freshness.ts",
+		"check:child": "bun scripts/run-isolated.ts tests/headless-child.ts",
+		"check:register-all": "bun scripts/run-isolated.ts tests/register-all.ts",
 		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:register-all"
 	},
+	"dependencies": {
+		"@oh-my-pi/pi-catalog": "18.2.0"
+	},
 	"peerDependencies": {
-		"@earendil-works/pi-ai": "*",
-		"@earendil-works/pi-coding-agent": "*",
-		"@earendil-works/pi-tui": "*"
+		"@oh-my-pi/pi-ai": "18.2.0",
+		"@oh-my-pi/pi-coding-agent": "18.2.0",
+		"@oh-my-pi/pi-tui": "18.2.0"
 	},
 	"devDependencies": {
 		"typescript": "^5.6.0"

@@ -4,7 +4,7 @@
 // be copy-pasted across the picker, the read-only overlay, and the setup
 // wizard. Everything here is pure and ANSI-aware.
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { pad } from "../ui-picker/render-text.ts";
 import type { Theme } from "../ui-picker/types.ts";
@@ -19,12 +19,7 @@ export interface TabSpec {
  *   Models  \u2502  Usage  \u2502  Diagnostics
  * The active tab is bold/accent; the rest are dimmed.
  */
-export function tabBar(
-	theme: Theme,
-	tabs: TabSpec[],
-	activeIdx: number,
-	width: number,
-): string {
+export function tabBar(theme: Theme, tabs: TabSpec[], activeIdx: number, width: number): string {
 	const sep = theme.fg("borderAccent", "\u2502");
 	const cells = tabs.map((t, i) => {
 		const label = `${i + 1} ${t.label}`;
@@ -39,11 +34,7 @@ export function tabBar(
  * Render a status header from labelled parts, joined with a dim gap and
  * clipped to `width`.
  */
-export function statusHeader(
-	theme: Theme,
-	parts: string[],
-	width: number,
-): string {
+export function statusHeader(theme: Theme, parts: string[], width: number): string {
 	const joined = parts.join(theme.fg("dim", "   "));
 	return pad(` ${joined}`, width);
 }
@@ -57,11 +48,7 @@ export function ruleLine(theme: Theme, width: number): string {
  * Slice `lines` to exactly `count` rows starting at `scroll`, padding the tail
  * with empty strings so the caller always gets a fixed-height block.
  */
-export function takeSlice(
-	lines: string[],
-	scroll: number,
-	count: number,
-): string[] {
+export function takeSlice(lines: string[], scroll: number, count: number): string[] {
 	const s = lines.slice(scroll, scroll + count);
 	while (s.length < count) s.push("");
 	return s;
@@ -106,11 +93,7 @@ export function clampScroll(
  * Simple offset-based clamp for flat (un-sticky) lists like usage/diagnostics.
  * Returns an offset within [0, total-visible].
  */
-export function clampOffset(
-	offset: number,
-	visible: number,
-	total: number,
-): number {
+export function clampOffset(offset: number, visible: number, total: number): number {
 	const max = Math.max(0, total - visible);
 	return Math.max(0, Math.min(offset, max));
 }

@@ -1,9 +1,6 @@
 // Public entry for the /cliproxy hub overlay.
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 
 import type { ProxyConfig } from "../config.ts";
 import type { Discovery } from "../fetch-models.ts";

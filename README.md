@@ -103,11 +103,24 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 You need an AI Gateway Platform endpoint with the OMP compatibility façade
 enabled and an ordinary AGP LLM key authorized for the required models.
 
-OMP must support explicit `metadataState` / `priceState`, optional model
-capacities and partial prices, and the `buildModel` / `toModelSpec` runtime
-exports. Older OMP hosts fabricate 128K/zero defaults and cannot honestly show
-unknown prices. Update the host together with this extension; the plugin does
-not hide unknown models or use NaN/zero substitutes.
+Use standard OMP 18.2.0 with the pinned public `@oh-my-pi` SDK and catalog
+dependencies. No patched host or custom capability marker is required. Bun
+1.3.14 or newer is required for development checks.
+Gateway credentials remain private to the guarded final HTTP fetch; they are
+never registered as provider-wide host API keys.
+
+The extension uses OMP's supported `fetchDynamicModels` registration to own
+canonical namespaces (`deepseek`, `opencode`, `codex`). Static registration alone
+does not suppress built-in discovery on stock OMP and can incorrectly recreate
+`deepseek/opencode/...` selectors. After upgrading from such a configuration,
+back up and remove only the polluted `model_cache` row for `deepseek` from
+`~/.omp/agent/models.db`, then restart OMP. Do not disable the entire provider.
+
+Choose `opencode/deepseek-v4.1-flash`, not
+`deepseek/opencode/deepseek-v4.1-flash`. The exact upstream wire ID remains
+`opencode/deepseek-v4.1-flash`. Both `x-session-id` and `x-opencode-session` are
+derived from the actual conversation ID. Explicit request headers take precedence
+over model headers; explicit model headers take precedence over that default.
 
 ## Install
 
@@ -206,24 +219,79 @@ For server route `codex/gpt-6-astra`, OMP registers provider `codex` and local
 model ID `gpt-6-astra`, so the selector is displayed exactly once. Chat
 Completions, Responses, and Messages requests always carry the server's exact
 `wireId`, even after an application payload hook. Session headers, cancellation,
-and other stream options are preserved. A missing `x-session-id` is filled from
-the OMP session ID without replacing an explicit caller header.
+and non-transport stream options are preserved. A missing `x-session-id` is
+filled from the OMP session ID without replacing an explicit caller header.
+Caller `fetch` overrides are deliberately not delegated: the final credential
+boundary calls the process fetch only after validating the exact gateway URL.
 
 Gateway streaming rejects stale or mismatched provider/API/base-URL model
 objects before dispatch. On OMP, the final fetch is restricted to the exact
 registered gateway endpoint and refuses redirects, including URL rewrites from
-native provider environment settings. The host must keep extension model lists
-authoritative across native catalog refreshes and bind credentials to that
-ownership; a shared provider name is never permission to send the gateway key
-to a built-in first-party model.
+native provider environment settings. The registered provider-wide API key is
+a nonsecret availability marker; the real AGP key is injected only at the guarded
+final fetch. Native SDK preparation and host request-debug wrappers never receive
+that key. Restart OMP after upgrading from a release that registered real keys,
+so old in-memory provider/model snapshots cannot survive the cutover.
+
+Stock OMP can repopulate built-in provider names during native catalog refresh.
+The marker prevents those paths receiving an AGP key, but it does not make
+native catalog ownership authoritative. Do not interpret a same-named first-party
+model as a gateway route: the gateway model must have its registered `agp:*` API
+and exact gateway base URL.
 
 Metadata precedence is `overrides[wireId]` > explicit configured model fields >
 trusted server metadata > genuine local catalog metadata for legacy built-ins.
 Gateway prices come only from the active AGP snapshot or explicit overrides,
 not a bundled upstream tariff. Cost components are USD per million tokens;
-missing components stay absent. `metadataState` is `catalog`, `override`, or
-`unknown`; `priceState` is `known`, `partial`, or `unknown`. Selecting a model in
-the picker does not freeze discovered capacity/prices into manual overrides.
+missing components stay absent in discovery/configuration. `metadataState` is
+`catalog`, `override`, or `unknown`; `priceState` is `known`, `partial`, or
+`unknown`. The plugin labels incomplete model names with `context unknown`,
+`output limit unknown`, `price unknown`, or `price partial` as applicable.
+Stock OMP may still fill numeric runtime defaults in its own model cards; those
+are not discovered gateway limits or confirmed free prices. Selecting a model in
+the plugin picker does not freeze capacities/prices into manual overrides.
+
+### Opt-in request latency diagnostics
+
+Start a new OMP process with diagnostics explicitly enabled; this does not turn
+on `PI_AI_GATEWAY_DEBUG` and does not record payloads:
+
+```sh
+PI_AI_GATEWAY_LATENCY=1 PI_AI_GATEWAY_LATENCY_FILE="$HOME/agp-latency.jsonl" omp
+```
+
+The optional file receives one JSON record per completed, failed, or cancelled
+gateway stream (new files use mode `0600`; its parent directory must exist).
+Without `PI_AI_GATEWAY_LATENCY_FILE`, summaries appear as `[ai-gateway] latency`
+UI notifications, or on stderr in headless mode. Retrieve a file with
+`cat "$HOME/agp-latency.jsonl"`; disable by restarting without the variables or
+with `PI_AI_GATEWAY_LATENCY=0`. No replay, extra inference, or paid request is
+performed by enabling diagnostics. File-write failures cannot fail inference.
+
+Each stream generates a nonsecret UUID in `X-AGP-Trace-ID` at the final guarded
+fetch. Correlate `trace_id` with gateway logs and each HTTP attempt's response
+`X-Request-ID` (`request_id`); these are not session IDs or authorization IDs.
+Only bounded timings, status codes, those identifiers, outcome, timestamp, and
+host-reported output token count are recorded—never keys, prompts, output text,
+raw SSE frames, URLs, arbitrary headers, or external error bodies.
+
+- All `*_ms` stage timestamps are offsets from entry into this plugin's stream
+  preparation. `plugin_prepare_ms` is plugin preparation only, not application
+  queue time. `client_queue_ms: null` means the application queue is unobservable.
+- `native_pre_dispatch_ms` includes native SDK preparation and any native wait
+  after plugin preparation; it is **not** a queue-only measurement.
+- Each `attempts` item has `dispatch_ms`, `headers_ms`, and `ttfb_ms` (dispatch to
+  response headers), status and request ID. At most 16 attempts are retained;
+  `attempt_count` includes any additional native retries.
+- `first_sse_ms` observes the native SSE callback without reading its payload.
+  `first_output_ms` is the first nonempty text, thinking, or tool-argument delta.
+  Unobserved stages are `null`, never fabricated zeroes.
+- `decode_elapsed_ms` is first output through completion, including local
+  parsing/terminal usage latency; `total_ms` includes preparation and waiting.
+  `output_tokens` is final host usage, not a count inferred from text. Neither
+  `output_tokens / total_ms` nor this observed decode interval is advertised as
+  provider generation TPS. Gateway guardrail totals likewise are not mask-only
+  timings.
 
 Discovery and usage caches are bound to endpoint, a SHA-256 identity of the
 resolved credentials, and contract version. Raw credentials are not written to
@@ -291,24 +359,23 @@ src/
 
 ## Release acceptance
 
-The source candidate is `0.4.3-agp.7`; publishing and installation are separate
-operator steps. `npm test` includes isolated HTTP/SSE model routing, metadata
-precedence, quota identity, cache authority, and headless cache checks.
+Version `0.4.3-agp.8` targets the official OMP 18.2.0 runtime. Publishing and
+installation are separate operator steps; installations should pin the full Git
+commit. `npm test` starts every contract in a separate, credential-free temporary
+HOME before loading Bun or production modules. It covers all three supported
+HTTP/SSE families, metadata precedence, cache authority, quota freshness,
+cancellation, producer rejection, and headless registration.
 
-Before publishing, also exercise the **actual OMP extension loader**, not only
-the upstream Pi test peer: use an isolated HOME/config and a local fixture
-server with no production credentials. Load this checkout's `index.ts` through
-OMP's extension loader; apply its pending providers to a real ModelRegistry.
-Assert `codex/gpt-6-astra` resolves once, context 1,050,000 / output 128,000 and
-cost 10/50/1/12.5 are retained, and unknown/partial model cards stay explicit.
-Stream the registry model through each underlying API into the fixture server;
-assert exact `codex/gpt-6-astra` payload, preserved session/custom headers and
-SSE result, and cancellation without a request. Include `maxInFlightRequests: { codex: 1 }`
-to catch nested custom/built-in dispatch acquiring the same provider permit
-twice. Exercise footer selection with
-two same-kind connector UUIDs plus a key-entitlement record; only the selected
-subscription must contribute. Repeat with the packaged candidate via the
-installed-package loader path. No paid inference is needed for this smoke.
-Keep one session open with a warm `cx` namespace, remove it from the fixture
-catalog, and trigger real refresh. Verify the `cx` models disappear without a
-session restart while current explicit groups and another provider remain.
+Run `npm run check:installed-host` against the actual installed OMP binary.
+This local-only fixture runs two real conversations against a warm cache,
+refreshes online and offline, verifies canonical namespace ownership, and sends
+12 streams using Chat Completions and Responses with provider concurrency 1.
+It checks exact wire IDs, stable session headers within each conversation,
+distinct IDs across conversations, explicit-header precedence, endpoint-bound
+credentials, and sanitized latency records. No production credentials or paid
+inference are used. Repeat against the installed package with
+`OMP_FIXTURE_PLUGIN_ROOT=/absolute/path/to/installed/pi-ai-gateway`.
+
+Quota refresh uses stock OMP's session/turn lifecycle. While idle, a lightweight
+current-model check updates the footer from the scoped cache when selection
+changes; expired cache data remains explicitly stale until refreshed.

@@ -23,7 +23,7 @@
 // Anything inside `lines` may already contain ANSI escapes; pad() is ANSI-aware
 // (see render-text.ts). No caller should ever draw \u256d/\u256e/\u2502/\u2570/\u256f by hand again.
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { pad } from "./ui-picker/render-text.ts";
 import type { Theme } from "./ui-picker/types.ts";
@@ -82,11 +82,7 @@ function drawBody(theme: Theme, content: string, width: number): string {
 	return `${side}${pad(content, inner)}${side}`;
 }
 
-function drawBottom(
-	theme: Theme,
-	footer: FrameFooter | undefined,
-	width: number,
-): string {
+function drawBottom(theme: Theme, footer: FrameFooter | undefined, width: number): string {
 	const start = `${BL}${HR}`;
 	const end = `${BR}`;
 	const fixedCells = 3; // \u2570 + \u2500 + \u256f

@@ -1,6 +1,6 @@
 // Shared types for the /cliproxy three-panel picker.
 
-import type { Api } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
 
 export interface Theme {
 	fg(name: string, s: string): string;

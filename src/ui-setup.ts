@@ -8,20 +8,10 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-	type Component,
-	getKeybindings,
-	Input,
-	matchesKey,
-} from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { type Component, getKeybindings, Input, matchesKey } from "@oh-my-pi/pi-tui";
 
-import {
-	CONFIG_PATH,
-	loadConfig,
-	resolveConfigValue,
-	saveConfig,
-} from "./config.ts";
+import { CONFIG_PATH, loadConfig, resolveConfigValue, saveConfig } from "./config.ts";
 import { frame, frameInner } from "./ui-frame.ts";
 
 interface Theme {
@@ -61,8 +51,7 @@ const STEPS: WizardStep[] = [
 		label: "providerPrefix",
 		hint: "Prefix for your custom provider names. Suggested groups become <prefix>-glm, <prefix>-gemini, etc. Use any short slug (letters/digits/dashes).",
 		required: true,
-		validate: (raw) =>
-			/^[a-z0-9][a-z0-9-]*$/i.test(raw) ? null : "letters/digits/dashes only",
+		validate: (raw) => (/^[a-z0-9][a-z0-9-]*$/i.test(raw) ? null : "letters/digits/dashes only"),
 	},
 ];
 
@@ -70,9 +59,7 @@ const STEPS: WizardStep[] = [
  * Run the interactive setup wizard if no usable config exists.
  * Returns true when config was just saved (caller should reapply).
  */
-export async function runSetupIfNeeded(
-	ctx: ExtensionCommandContext,
-): Promise<boolean> {
+export async function runSetupIfNeeded(ctx: ExtensionCommandContext): Promise<boolean> {
 	const cfg = loadConfig();
 	const hasEndpoint = Boolean(cfg.proxy.endpoint);
 	const hasResolvedKey = Boolean(resolveConfigValue(cfg.proxy.apiKey));
@@ -82,10 +69,7 @@ export async function runSetupIfNeeded(
 }
 
 /** Force-show the wizard from /cliproxy-setup regardless of current config. */
-export async function runSetup(
-	ctx: ExtensionCommandContext,
-	forceAll = false,
-): Promise<boolean> {
+export async function runSetup(ctx: ExtensionCommandContext, forceAll = false): Promise<boolean> {
 	const existing = loadConfig();
 	const values: Record<string, string> = {
 		endpoint: existing.proxy.endpoint ?? "",
@@ -101,11 +85,7 @@ export async function runSetup(
 		if (!forceAll && prefill) {
 			continue;
 		}
-		const result = await promptStep(
-			ctx,
-			step,
-			prefill || step.initialValue || "",
-		);
+		const result = await promptStep(ctx, step, prefill || step.initialValue || "");
 		if (result === undefined) {
 			cancelled = true;
 			break;

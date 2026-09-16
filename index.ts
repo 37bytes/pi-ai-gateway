@@ -14,11 +14,11 @@
  * a missing/broken proxy must not prevent Pi from starting.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
 
-import { applyAll, registrationConfig } from "./src/apply.ts";
+import { applyAll, registrationConfig, requireGatewayTransport } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
 import { cacheScope } from "./src/cache-scope.ts";
 import { registerCommands } from "./src/commands.ts";
@@ -60,12 +60,7 @@ const BRIDGE_DOCS_URL = "https://github.com/abix5/pi-cliproxyapi-bridge#pi-bridg
 export function isHeadlessRun(argv = process.argv): boolean {
 	const modeIndex = argv.indexOf("--mode");
 	const mode = modeIndex >= 0 ? argv[modeIndex + 1] : undefined;
-	return (
-		mode === "json" ||
-		mode === "print" ||
-		argv.includes("-p") ||
-		argv.includes("--print")
-	);
+	return mode === "json" || mode === "print" || argv.includes("-p") || argv.includes("--print");
 }
 
 /**
@@ -186,23 +181,44 @@ async function refreshQuotaStatus(
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const discovery = readDiscoveryCache(cacheScope(cfg.proxy.endpoint, resolveConfigValue(cfg.proxy.apiKey), PREFERRED_CONTRACT))?.discovery;
+	const discovery = readDiscoveryCache(
+		cacheScope(cfg.proxy.endpoint, resolveConfigValue(cfg.proxy.apiKey), PREFERRED_CONTRACT),
+	)?.discovery;
 	if (!discovery) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
 	const current = registrationConfig(cfg, discovery);
-	const entry = discovery.customPool.find((candidate) =>
-		(candidate.selectorId ?? candidate.id) === model.id &&
-		current.customProviders[model.provider]?.models.some((configured) => configured.id === candidate.id),
-	) ?? discovery.builtinProviders.find((provider) => provider.name === model.provider)?.models.find((candidate) =>
-		(candidate.selectorId ?? candidate.id) === model.id && current.builtinProviders[model.provider]?.models.includes(candidate.id),
-	);
-	const rendered = entry ? renderQuotaSegment(usage.doc, {
-		providerId: entry.providerId,
-		providerKind: entry.providerKind,
-		modelIds: [entry.id, entry.wireId, entry.selectorId, entry.canonicalModel].filter((id): id is string => !!id),
-	}, ui.theme, model.id, { localStale: usage.stale }) : null;
+	const entry =
+		discovery.customPool.find(
+			(candidate) =>
+				(candidate.selectorId ?? candidate.id) === model.id &&
+				current.customProviders[model.provider]?.models.some(
+					(configured) => configured.id === candidate.id,
+				),
+		) ??
+		discovery.builtinProviders
+			.find((provider) => provider.name === model.provider)
+			?.models.find(
+				(candidate) =>
+					(candidate.selectorId ?? candidate.id) === model.id &&
+					current.builtinProviders[model.provider]?.models.includes(candidate.id),
+			);
+	const rendered = entry
+		? renderQuotaSegment(
+				usage.doc,
+				{
+					providerId: entry.providerId,
+					providerKind: entry.providerKind,
+					modelIds: [entry.id, entry.wireId, entry.selectorId, entry.canonicalModel].filter(
+						(id): id is string => !!id,
+					),
+				},
+				ui.theme,
+				model.id,
+				{ localStale: usage.stale },
+			)
+		: null;
 	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
 }
 
@@ -253,6 +269,13 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 		});
 	}
 
+	try {
+		await requireGatewayTransport();
+	} catch (error) {
+		log.error((error as Error).message);
+		return;
+	}
+
 	const cfg = loadConfig();
 	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
 	if (!resolvedKey) {
@@ -269,7 +292,9 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 	}
 
 	try {
-		const cached = readDiscoveryCache(cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT));
+		const cached = readDiscoveryCache(
+			cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT),
+		);
 		if (cached) {
 			// Serve the last good discovery instantly so Pi startup never blocks on
 			// the ~5s proxy round-trip, then revalidate over the network in the
@@ -286,9 +311,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 				void revalidateDiscovery(pi, cfg, resolvedKey);
 			}
 		} else if (headless) {
-			log.warn(
-				"discovery cache missing in headless run — no providers registered",
-			);
+			log.warn("discovery cache missing in headless run — no providers registered");
 		} else {
 			const discovery = await fetchDiscovery(cfg, resolvedKey);
 			await applyAll(pi, cfg, discovery);
@@ -321,23 +344,40 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 	//
 	// The footer binds the selected discovery entry to its connector UUID.
 	// It never guesses codex/claude identity from a local provider name.
-	const resolvedUsageKey = headless
-		? ""
-		: resolveConfigValue(cfg.proxy.usageKey);
+	const resolvedUsageKey = headless ? "" : resolveConfigValue(cfg.proxy.usageKey);
 	// Quota is available through the pi-bridge plugin (ordinary API key) or the
 	if (!headless && (resolvedUsageKey || cfg.proxy.apiKey)) {
 		let lastTurnFetchMs = 0;
+		let modelPoll: NodeJS.Timeout | undefined;
 
 		// session_start: render immediately from cache (no fetch needed if fresh).
 		pi.on("session_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
 			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
 			warnIfLegacyUsageSource(ctx.ui);
+			clearInterval(modelPoll);
+			let provider = ctx.model?.provider;
+			let modelId = ctx.model?.id;
+			// OMP has no model_select event. Observe its public current-model
+			// getter without replacing the host footer or fetching on every tick.
+			modelPoll = setInterval(() => {
+				if (provider === ctx.model?.provider && modelId === ctx.model?.id) return;
+				provider = ctx.model?.provider;
+				modelId = ctx.model?.id;
+				void refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model, { readOnly: true }).catch(
+					() => log.debug("quota model-switch refresh failed"),
+				);
+			}, 500);
+			modelPoll.unref();
 		});
 
-		// model_select: re-render for the new provider. Read from cache so the
-		// segment updates instantly on model switch without a network round-trip.
-		pi.on("model_select", async (_event, ctx) => {
+		pi.on("session_shutdown", () => {
+			clearInterval(modelPoll);
+			modelPoll = undefined;
+		});
+
+		// Revalidate authority and selected-model quota before each real turn.
+		pi.on("before_agent_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
 			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
 		});

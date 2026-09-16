@@ -1,11 +1,7 @@
 // Confirm-remove prompt overlay used when the user deletes a custom group.
 
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-	type Component,
-	getKeybindings,
-	matchesKey,
-} from "@earendil-works/pi-tui";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import { type Component, getKeybindings, matchesKey } from "@oh-my-pi/pi-tui";
 
 import { frame } from "../ui-frame.ts";
 import type { Theme } from "./types.ts";
@@ -58,11 +54,7 @@ function buildConfirmPrompt(
 				done(false);
 				return;
 			}
-			if (
-				matchesKey(data, "y") ||
-				matchesKey(data, "enter") ||
-				matchesKey(data, "return")
-			) {
+			if (matchesKey(data, "y") || matchesKey(data, "enter") || matchesKey(data, "return")) {
 				done(true);
 				return;
 			}

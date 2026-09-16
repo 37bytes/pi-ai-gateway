@@ -1,7 +1,7 @@
 // State mutations + read helpers shared by the picker UI.
 // Nothing in this module touches the rendering layer.
 
-import type { Api } from "@earendil-works/pi-ai";
+import type { Api } from "@oh-my-pi/pi-ai";
 
 import type { CustomProviderModelConfig, ProxyConfig } from "../config.ts";
 import type { CatalogIndex, ModelEntry, ProviderEntry } from "./types.ts";
@@ -15,21 +15,14 @@ export function claimedBy(cfg: ProxyConfig): Map<string, string> {
 	return m;
 }
 
-export function assignedIdsFor(
-	cfg: ProxyConfig,
-	prov: ProviderEntry,
-): string[] {
+export function assignedIdsFor(cfg: ProxyConfig, prov: ProviderEntry): string[] {
 	if (prov.kind === "builtin") {
 		return [...(cfg.builtinProviders[prov.name]?.models ?? [])];
 	}
 	return cfg.customProviders[prov.name]?.models.map((m) => m.id) ?? [];
 }
 
-export function poolFor(
-	cfg: ProxyConfig,
-	prov: ProviderEntry,
-	catalog: CatalogIndex,
-): string[] {
+export function poolFor(cfg: ProxyConfig, prov: ProviderEntry, catalog: CatalogIndex): string[] {
 	if (prov.kind === "builtin") {
 		const ids = catalog.builtinModelIds.get(prov.name) ?? [];
 		const assigned = new Set(assignedIdsFor(cfg, prov));
@@ -44,11 +37,7 @@ export function poolFor(
 	});
 }
 
-export function attachModel(
-	cfg: ProxyConfig,
-	prov: ProviderEntry,
-	model: ModelEntry,
-): void {
+export function attachModel(cfg: ProxyConfig, prov: ProviderEntry, model: ModelEntry): void {
 	if (prov.kind === "builtin") {
 		const cur = cfg.builtinProviders[prov.name] ?? {
 			enabled: true,
@@ -78,11 +67,7 @@ export function attachModel(
 	cfg.customProviders[prov.name] = cur;
 }
 
-export function detachModel(
-	cfg: ProxyConfig,
-	prov: ProviderEntry,
-	modelId: string,
-): void {
+export function detachModel(cfg: ProxyConfig, prov: ProviderEntry, modelId: string): void {
 	if (prov.kind === "builtin") {
 		const cur = cfg.builtinProviders[prov.name];
 		if (!cur) return;
@@ -100,8 +85,7 @@ export function apiCompatible(provApi: Api, modelApi: Api): boolean {
 	// openai-completions and openai-responses are siblings \u2014 most models work
 	// with both, so don't warn when they differ.
 	const openaiFamily: Api[] = ["openai-completions", "openai-responses"];
-	if (openaiFamily.includes(provApi) && openaiFamily.includes(modelApi))
-		return true;
+	if (openaiFamily.includes(provApi) && openaiFamily.includes(modelApi)) return true;
 	return false;
 }
 
@@ -127,11 +111,7 @@ export function groupPoolByOwnedBy(
  * Substring filter over model id + display name (case-insensitive). Empty
  * query returns the input untouched. Used by the pool filter box.
  */
-export function filterModelIds(
-	ids: string[],
-	catalog: CatalogIndex,
-	query: string,
-): string[] {
+export function filterModelIds(ids: string[], catalog: CatalogIndex, query: string): string[] {
 	const q = query.trim().toLowerCase();
 	if (!q) return ids;
 	return ids.filter((id) => {

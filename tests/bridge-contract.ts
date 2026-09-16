@@ -4,23 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { renderQuotaSegment } from "../src/status-quota.ts";
-const home = mkdtempSync(join(tmpdir(), "pi-ai-gateway-contract-"));
+const home = process.env.PI_GATEWAY_TEST_HOME!;
+assert.ok(home && process.env.HOME === home, "Run through scripts/run-isolated.ts");
 const originalHome = process.env.HOME;
 const originalFetch = globalThis.fetch;
 process.env.HOME = home;
 
 // Config constants derive their paths at module evaluation, so the test loads
 // the known modules after isolating HOME.
-const { fetchBridgeCapabilities, PLUGIN_USER_AGENT } = await import(
-	"../src/bridge.ts"
-);
+const { fetchBridgeCapabilities, PLUGIN_USER_AGENT } = await import("../src/bridge.ts");
 const { fetchDiscovery } = await import("../src/fetch-models.ts");
-const {
-	clearUsageCache,
-	fetchUsage,
-	lastUsageContract,
-	lastUsageSource,
-} = await import("../src/fetch-usage.ts");
+const { clearUsageCache, fetchUsage, lastUsageContract, lastUsageSource } = await import(
+	"../src/fetch-usage.ts"
+);
 
 const cfg = {
 	proxy: {
@@ -85,11 +81,7 @@ try {
 			endpoints: { usage: "/usage" },
 		});
 	});
-	const capabilities = await fetchBridgeCapabilities(
-		"https://gateway.test",
-		"gateway-key",
-		2,
-	);
+	const capabilities = await fetchBridgeCapabilities("https://gateway.test", "gateway-key", 2);
 	assert.deepEqual(capabilities, {
 		contract: 2,
 		latestContract: 2,
@@ -156,10 +148,7 @@ try {
 	assert.deepEqual(await fetchUsage(cfg, "legacy-key", { force: true }), usageDocument);
 	assert.deepEqual(
 		calls.map((call) => call.path),
-		[
-			"/v0/resource/plugins/pi-bridge/capabilities",
-			"/v0/resource/plugins/pi-bridge/usage",
-		],
+		["/v0/resource/plugins/pi-bridge/capabilities", "/v0/resource/plugins/pi-bridge/usage"],
 	);
 	assert.equal(calls[1]?.headers.get("authorization"), "Bearer gateway-key");
 	assert.equal(calls[1]?.headers.get("x-pi-contract"), "2");
@@ -167,16 +156,36 @@ try {
 	assert.equal(lastUsageContract(), 2);
 
 	const legacyAccount = {
-		provider: "codex", account: "opaque-account", authIndex: "opaque-account", label: "Subscription",
-		status: "active", disabled: false, unavailable: false, supported: true,
-		success: 0, failed: 0, lastRequestAt: null,
+		provider: "codex",
+		account: "opaque-account",
+		authIndex: "opaque-account",
+		label: "Subscription",
+		status: "active",
+		disabled: false,
+		unavailable: false,
+		supported: true,
+		success: 0,
+		failed: 0,
+		lastRequestAt: null,
 		groups: [{ id: "five-hour", label: "5h", remainingFraction: 0.4, resetTime: null }],
 	};
-	const legacyUsage = { ...usageDocument, accounts: [
-		legacyAccount,
-		{ ...legacyAccount, account: "opaque-key-cap", scope: "key_entitlement", groups: [{ ...legacyAccount.groups[0], remainingFraction: 1 }] },
-	] };
-	const quotaTheme = { fg(_color: "success" | "warning" | "error" | "dim", text: string) { return text; } };
+	const legacyUsage = {
+		...usageDocument,
+		accounts: [
+			legacyAccount,
+			{
+				...legacyAccount,
+				account: "opaque-key-cap",
+				scope: "key_entitlement",
+				groups: [{ ...legacyAccount.groups[0], remainingFraction: 1 }],
+			},
+		],
+	};
+	const quotaTheme = {
+		fg(_color: "success" | "warning" | "error" | "dim", text: string) {
+			return text;
+		},
+	};
 	clearUsageCache();
 	calls = installFetch((call) => {
 		if (call.path === "/v0/resource/plugins/pi-bridge/capabilities") return json({}, 404);
@@ -202,7 +211,11 @@ try {
 	assert.equal(lastUsageContract(), 1);
 
 	// Missing scope in native AGP usage is not sufficient to claim a subscription.
-	installFetch((call) => call.path.endsWith("capabilities") ? json({}, 404) : json({ ...usageDocument, accounts: [legacyAccount] }));
+	installFetch((call) =>
+		call.path.endsWith("capabilities")
+			? json({}, 404)
+			: json({ ...usageDocument, accounts: [legacyAccount] }),
+	);
 	const unclassifiedNative = await fetchUsage(cfg, "legacy-key", { force: true });
 	assert.equal(renderQuotaSegment(unclassifiedNative, { providerKind: "codex" }, quotaTheme), null);
 
