@@ -136,6 +136,10 @@ pi install github:37bytes/pi-ai-gateway
 Then run `/cliproxy-setup` to configure the AGP endpoint. The legacy command
 name is intentionally retained so existing OMP workflows keep working.
 
+If the host rejects a discovery (an entry the extension cannot route), the
+cached copy is dropped and fetched again: a stale cache can no longer pin a
+broken catalog across restarts.
+
 ### Taskflow child agents
 
 Taskflow starts children with an extension allowlist, so add this package's entrypoint

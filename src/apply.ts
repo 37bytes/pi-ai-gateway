@@ -5,6 +5,8 @@ import { getBundledModels } from "@oh-my-pi/pi-catalog/models";
 import type { buildModel as BuildNativeModel } from "@oh-my-pi/pi-catalog/build";
 import type { ExtensionAPI, ProviderConfig, ProviderModelConfig } from "@oh-my-pi/pi-coding-agent";
 
+import { invalidateDiscoveryCache } from "./cache.ts";
+
 import { ALLOWED_APIS, baseUrlFor } from "./compat.ts";
 import type { CustomProviderConfig, CustomProviderModelConfig, ProxyConfig } from "./config.ts";
 import { resolveConfigValue } from "./config.ts";
@@ -416,4 +418,28 @@ export function registerAllSlug(suggested: string): string {
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
 	return slug || "pool";
+}
+
+/**
+ * Apply one discovery, dropping the cached copy when the host rejects it.
+ *
+ * A pool that cannot be applied must never stay on disk. While it does, every
+ * later start applies the same rejected copy, fails identically and never
+ * reaches the network, so a single unroutable entry keeps the whole catalog
+ * unregistered — the failure this wrapper exists to end. Invalidation happens
+ * before the error propagates, so the next start (or the caller's refetch)
+ * reads a usable pool.
+ */
+export async function applyDiscovery(
+	pi: ExtensionAPI,
+	cfg: ProxyConfig,
+	discovery: Discovery,
+): Promise<void> {
+	try {
+		await applyAll(pi, cfg, discovery);
+	} catch (err) {
+		invalidateDiscoveryCache();
+		log.warn("discovery rejected by the host — cache invalidated:", (err as Error).message);
+		throw err;
+	}
 }

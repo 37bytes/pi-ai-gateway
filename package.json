@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.9",
+	"version": "0.4.3-agp.10",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -32,7 +32,8 @@
 		"check:quota": "bun scripts/run-isolated.ts tests/quota-freshness.ts",
 		"check:child": "bun scripts/run-isolated.ts tests/headless-child.ts",
 		"check:register-all": "bun scripts/run-isolated.ts tests/register-all.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:register-all"
+		"check:discovery-cache": "bun scripts/run-isolated.ts tests/discovery-cache-recovery.ts",
+		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all"
 	},
 	"dependencies": {
 		"@oh-my-pi/pi-catalog": "18.2.0"

@@ -6,7 +6,7 @@
 // good Discovery and serve it instantly on boot, then revalidate over the
 // network in the background.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { CONFIG_DIR } from "./config.ts";
@@ -56,5 +56,24 @@ export function writeDiscoveryCache(discovery: Discovery, scope: string): void {
 		writeFileSync(DISCOVERY_CACHE_PATH, JSON.stringify(env), { encoding: "utf8", mode: 0o600 });
 	} catch (err) {
 		log.warn("failed to write discovery cache:", (err as Error).message);
+	}
+}
+
+/**
+ * Drop the cached discovery.
+ *
+ * Called when the host rejects a discovery, so a pool it cannot route is never
+ * served from disk again. Keeping such a copy is what turned one rejected route
+ * into a lasting outage: every later start applied the same poisoned cache,
+ * failed the same way, and never reached the network.
+ */
+export function invalidateDiscoveryCache(): void {
+	try {
+		if (existsSync(DISCOVERY_CACHE_PATH)) {
+			rmSync(DISCOVERY_CACHE_PATH, { force: true });
+			log.info("discovery cache invalidated");
+		}
+	} catch (err) {
+		log.warn("failed to invalidate discovery cache:", (err as Error).message);
 	}
 }

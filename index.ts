@@ -18,7 +18,7 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
 
-import { applyAll, registrationConfig, requireGatewayTransport } from "./src/apply.ts";
+import { applyAll, applyDiscovery, registrationConfig, requireGatewayTransport } from "./src/apply.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
 import { cacheScope } from "./src/cache-scope.ts";
 import { registerCommands } from "./src/commands.ts";
@@ -113,7 +113,7 @@ async function revalidateDiscovery(
 ): Promise<void> {
 	try {
 		const fresh = await fetchDiscovery(cfg, resolvedKey);
-		await applyAll(pi, cfg, fresh);
+		await applyDiscovery(pi, cfg, fresh);
 		log.debug("discovery revalidated from network");
 	} catch (e) {
 		const message = (e as Error).message ?? "";
@@ -302,7 +302,15 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 			log.info(
 				`discovery from cache (age ${Math.round(cached.ageMs / 1000)}s): ${cached.discovery.builtinProviders.length} builtin, ${cached.discovery.customPool.length} custom`,
 			);
-			await applyAll(pi, cfg, cached.discovery);
+			try {
+				await applyDiscovery(pi, cfg, cached.discovery);
+			} catch (err) {
+				// The cached pool is unusable — applyDiscovery already dropped it, so
+				// fetch a usable one now instead of starting without providers.
+				log.warn("cached discovery unusable — fetching a fresh one:", (err as Error).message);
+				const fresh = await fetchDiscovery(cfg, resolvedKey);
+				await applyDiscovery(pi, cfg, fresh);
+			}
 			if (!headless) {
 				// Revalidate in the background, but bind the work to the session
 				// that started it: pi invalidates the extension handle when the
@@ -314,7 +322,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 			log.warn("discovery cache missing in headless run — no providers registered");
 		} else {
 			const discovery = await fetchDiscovery(cfg, resolvedKey);
-			await applyAll(pi, cfg, discovery);
+			await applyDiscovery(pi, cfg, discovery);
 		}
 	} catch (err) {
 		log.error("initial apply failed:", (err as Error).message);
@@ -330,7 +338,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 					const k = resolveConfigValue(c.proxy.apiKey);
 					if (!k) return;
 					const d = await fetchDiscovery(c, k);
-					await applyAll(pi, c, d);
+					await applyDiscovery(pi, c, d);
 					log.debug("background refresh ok");
 				} catch (e) {
 					log.warn("background refresh failed:", (e as Error).message);
