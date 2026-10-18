@@ -1,39 +1,38 @@
 /**
- * AI Gateway — Pi extension that manages model providers through a single
- * AI Gateway endpoint with one corporate key.
+ * AI Gateway — Pi extension that manages model providers through AI Gateway
+ * Platform, one environment profile per session.
  *
  * On factory boot we:
- *   1. load ~/.pi/agent/ai-gateway/config.json (migrates upstream config; defaults if missing)
- *   2. fetch discovery (well-known → fall back to /v1/models)
- *   3. call pi.registerProvider for each enabled built-in + custom provider
- *   4. register slash commands /cliproxy and /cliproxy-setup
- *      (refresh, usage, and diagnostics are tabs/actions inside the hub)
- *   5. register status-line quota segment (shared file cache, see usage-shared-cache)
+ *   1. bring the profile layout up to date (one-time migration of the single
+ *      pre-profile config into `prod`) and resolve the launch environment
+ *   2. load ~/.pi/agent/ai-gateway/profiles/<id>/config.json
+ *   3. fetch or reuse that profile's discovery, then register every provider
+ *      under the environment namespace (`agp-prod-*`, `agp-test-*`)
+ *   4. register slash commands /cliproxy, /cliproxy-setup, /cliproxy-profile
+ *   5. bind the session's environment (persisted, so a resume stays on it) and
+ *      map model roles onto it, including for subagents
+ *   6. register the footer's environment + quota segments
  *
  * All discovery + apply errors are logged but never abort extension load —
  * a missing/broken proxy must not prevent Pi from starting.
  */
 
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import fs from "node:fs";
 import path from "node:path";
 
-import { applyAll, applyDiscovery, registrationConfig, requireGatewayTransport } from "./src/apply.ts";
+import { registrationConfig, requireGatewayTransport } from "./src/apply.ts";
+import { agpBaseName } from "./src/provider-names.ts";
 import { readDiscoveryCache } from "./src/cache.ts";
-import { cacheScope } from "./src/cache-scope.ts";
 import { registerCommands } from "./src/commands.ts";
-import { loadConfig, resolveConfigValue } from "./src/config.ts";
 import { detectConflicts } from "./src/conflicts.ts";
 import { fetchDiscovery } from "./src/fetch-models.ts";
-import type { ProxyConfig } from "./src/config.ts";
-import type { UsageDocument } from "./src/fetch-usage.ts";
-import {
-	fetchUsage,
-	lastUsageContract,
-	lastUsageSource,
-	PREFERRED_CONTRACT,
-} from "./src/fetch-usage.ts";
+import { type UsageDocument, fetchUsage, lastUsageContract, lastUsageSource, PREFERRED_CONTRACT } from "./src/fetch-usage.ts";
 import { log, setLogSink } from "./src/log.ts";
+import { PROFILE_FLAG, type ProfileSnapshot, describeProfile } from "./src/profile-context.ts";
+import { ensureProfileLayout } from "./src/profiles-migration.ts";
+import { type SessionRuntime, runtimeFor } from "./src/session-runtime.ts";
+import { renderQuotaSegment } from "./src/status-quota.ts";
 import {
 	isUsageFresh,
 	readUsageCache,
@@ -41,7 +40,6 @@ import {
 	tryAcquireUsageLock,
 	writeUsageCache,
 } from "./src/usage-shared-cache.ts";
-import { renderQuotaSegment } from "./src/status-quota.ts";
 
 /** Status-line key. The leading "0" makes it sort before alphabetic keys so
  * the quota segment appears first on the footer's extension-status line. */
@@ -63,39 +61,65 @@ export function isHeadlessRun(argv = process.argv): boolean {
 	return mode === "json" || mode === "print" || argv.includes("-p") || argv.includes("--print");
 }
 
+// Events the running host emits but the peer typings this package is built
+// against do not declare (18.11.1 vs 18.2). Declared here rather than cast
+// inline at the registration site so the payload we rely on stays visible.
+interface SubagentSpawnEvent {
+	type: "before_subagent_spawn";
+	agent: string;
+	invocationKind: string;
+	modelRole?: string;
+	/** Attempt-ordered model patterns this spawn would resolve. */
+	patterns: string[];
+	spawnKey?: string;
+}
+interface SubagentSpawnResult {
+	model?: string | string[];
+	block?: boolean;
+	reason?: string;
+	note?: string;
+}
+interface HostEventExtensions {
+	on(
+		event: "before_subagent_spawn",
+		handler: (event: SubagentSpawnEvent, ctx: ExtensionContext) => SubagentSpawnResult | void,
+	): void;
+}
+
 /**
- * Fetch usage data through the shared file cache: if the on-disk cache is
- * fresh (within TTL), return it without any network call; otherwise acquire
- * a cross-process lock and fetch at most once. The result carries local cache
- * staleness separately from unchanged server observation/cache provenance.
+ * Fetch usage data through the profile's shared file cache: if the on-disk
+ * cache is fresh (within TTL), return it without any network call; otherwise
+ * acquire that profile's cross-process lock and fetch at most once. The result
+ * carries local cache staleness separately from unchanged server
+ * observation/cache provenance.
  */
 async function loadUsageCached(
-	cfg: ProxyConfig,
-	resolvedUsageKey: string,
+	snapshot: ProfileSnapshot,
 	opts: { readOnly?: boolean } = {},
 ): Promise<{ doc: UsageDocument; stale: boolean } | null> {
-	const apiKey = resolveConfigValue(cfg.proxy.apiKey);
-	const scope = cacheScope(cfg.proxy.endpoint, apiKey, PREFERRED_CONTRACT, resolvedUsageKey);
-	const cached = readUsageCache(scope);
+	const cached = readUsageCache(snapshot.paths, snapshot.usageScope);
 	const fallback = cached ? { doc: cached.doc, stale: !isUsageFresh(cached.ageMs) } : null;
 	if (fallback && !fallback.stale) return fallback;
 	// readOnly mode (debounce path): never fetch, serve stale cache if available.
 	if (opts.readOnly) return fallback;
 	// Stale or missing — try to become the fetcher.
-	const token = tryAcquireUsageLock();
+	const token = tryAcquireUsageLock(snapshot.paths);
 	if (!token) {
-		// Another instance is fetching; serve stale data if we have it.
+		// Another instance on this profile is fetching; serve stale data if we have it.
 		return fallback;
 	}
 	try {
-		const doc = await fetchUsage(cfg, resolvedUsageKey, { force: true, resolvedApiKey: apiKey });
-		writeUsageCache(doc, scope);
+		const doc = await fetchUsage(snapshot.cfg, snapshot.resolvedUsageKey, {
+			force: true,
+			resolvedApiKey: snapshot.apiKey,
+		});
+		writeUsageCache(snapshot.paths, doc, snapshot.usageScope);
 		return { doc, stale: false };
 	} catch (e) {
 		log.debug("usage fetch failed in shared cache:", (e as Error).message);
 		return fallback;
 	} finally {
-		releaseUsageLock(token);
+		releaseUsageLock(snapshot.paths, token);
 	}
 }
 
@@ -104,16 +128,23 @@ async function loadUsageCached(
  *
  * The extension handle captured at startup becomes invalid once pi replaces or
  * reloads the session, so a slow refresh that finishes afterwards must not try
- * to register providers with it. That case is expected, not an error.
+ * to register providers with it. That case is expected, not an error. A refresh
+ * whose environment was left behind while it was in flight is dropped by the
+ * apply gate inside the runtime.
  */
 async function revalidateDiscovery(
-	pi: ExtensionAPI,
-	cfg: ProxyConfig,
-	resolvedKey: string,
+	runtime: SessionRuntime,
+	snapshot: ProfileSnapshot,
 ): Promise<void> {
 	try {
-		const fresh = await fetchDiscovery(cfg, resolvedKey);
-		await applyDiscovery(pi, cfg, fresh);
+		const fresh = await fetchDiscovery(snapshot.cfg, snapshot.apiKey, snapshot.paths);
+		if (!runtime.isCurrent(snapshot)) {
+			log.info(`discovery for ${snapshot.id} arrived after the environment changed — dropped`);
+			return;
+		}
+		runtime.registerDiscovery(snapshot, fresh);
+		await runtime.applySnapshot(snapshot, fresh);
+		await runtime.applyRoleMapping(snapshot);
 		log.debug("discovery revalidated from network");
 	} catch (e) {
 		const message = (e as Error).message ?? "";
@@ -156,39 +187,46 @@ function warnIfLegacyUsageSource(ui: {
 	}
 }
 
-/** Update quota for the exact gateway namespace of the selected model. */
+/**
+ * Update quota for the exact gateway namespace of the selected model.
+ *
+ * Everything is resolved from one snapshot of the session's environment, so a
+ * quota read can never mix one environment's discovery with another's key or
+ * cache file.
+ */
 async function refreshQuotaStatus(
-	cfg: ProxyConfig,
-	resolvedUsageKey: string,
-	ui: {
-		theme: {
-			fg(color: "success" | "warning" | "error" | "dim", text: string): string;
-		};
-		setStatus(key: string, text: string | undefined): void;
-	},
-	model: { provider: string; id?: string } | undefined,
+	runtime: SessionRuntime,
+	ctx: ExtensionContext,
 	opts: { readOnly?: boolean } = {},
 ): Promise<void> {
-	// Setup may have switched endpoint/key since this session's callbacks loaded.
-	cfg = loadConfig();
-	resolvedUsageKey = resolveConfigValue(cfg.proxy.usageKey);
+	// Setup may have switched endpoint/key inside this profile since the
+	// callbacks were bound, so take a fresh snapshot of THIS session's binding
+	// every time; a session that was never bound reads the launch seed.
+	const snapshot = runtime.snapshotFor(ctx);
+	const { ui } = ctx;
+	const model = ctx.model;
+	if (!snapshot) {
+		ui.setStatus(QUOTA_STATUS_KEY, undefined);
+		return;
+	}
 	if (!model) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const usage = await loadUsageCached(cfg, resolvedUsageKey, opts);
+	const usage = await loadUsageCached(snapshot, opts);
 	if (!usage) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const discovery = readDiscoveryCache(
-		cacheScope(cfg.proxy.endpoint, resolveConfigValue(cfg.proxy.apiKey), PREFERRED_CONTRACT),
-	)?.discovery;
+	const discovery = readDiscoveryCache(snapshot.paths, snapshot.discoveryScope)?.discovery;
 	if (!discovery) {
 		ui.setStatus(QUOTA_STATUS_KEY, undefined);
 		return;
 	}
-	const current = registrationConfig(cfg, discovery);
+	const current = registrationConfig(snapshot.cfg, discovery, snapshot.id);
+	// The selected model's provider is registered under this environment's
+	// namespace; discovery still speaks the server's own namespace.
+	const base = agpBaseName(model.provider, runtime.profileIds());
 	const entry =
 		discovery.customPool.find(
 			(candidate) =>
@@ -198,7 +236,7 @@ async function refreshQuotaStatus(
 				),
 		) ??
 		discovery.builtinProviders
-			.find((provider) => provider.name === model.provider)
+			.find((provider) => provider.name === base)
 			?.models.find(
 				(candidate) =>
 					(candidate.selectorId ?? candidate.id) === model.id &&
@@ -259,7 +297,30 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 
+	// The environment selects everything downstream — config, caches, keys,
+	// provider names — so it is resolved before any of them is touched. The flag
+	// is an interactive convenience on top of AGP_PROFILE; a host without
+	// extension flags (upstream Pi) simply relies on the environment.
+	if (typeof pi.registerFlag === "function") {
+		pi.registerFlag(PROFILE_FLAG, {
+			description: "AI Gateway environment profile for this session (e.g. prod, test)",
+			type: "string",
+		});
+	}
+	ensureProfileLayout();
+	const runtime = runtimeFor(pi);
+	// Work that happens before a session exists is bound to the launch seed; the
+	// first session then binds its own environment and, when they differ, this
+	// pre-session registration is superseded (see the runtime's root binding).
+	const rootSnapshot = runtime.rootSnapshot(pi);
+	// A launch request naming an environment this machine lacks is fatal: no
+	// providers are registered, no config is resolved and no discovery is
+	// fetched, so a typo cannot run the session on a different environment than
+	// the one requested.
+	const blocked = runtime.rootProblem;
+	const snapshot = rootSnapshot;
 	const headless = isHeadlessRun();
+
 	if (!headless) {
 		registerCommands(pi);
 		// Route later messages through Pi's notification channel. Startup runs
@@ -276,92 +337,180 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 		return;
 	}
 
-	const cfg = loadConfig();
-	const resolvedKey = resolveConfigValue(cfg.proxy.apiKey);
-	if (!resolvedKey) {
-		log.warn(
-			"apiKey is empty after resolution — skipping initial apply. Run /cliproxy-setup to configure.",
-		);
-		return;
+	if (blocked) {
+		log.error(`AI Gateway is not registering providers: ${blocked.reason}`);
+		if (!headless) {
+			pi.on("session_start", (_event, ctx) => {
+				ctx.ui.notify(`AI Gateway: ${blocked.reason}`, "error");
+			});
+		}
 	}
 
 	// Conflict scanning only feeds the interactive diagnostics UI.
-	if (!headless) {
-		const conflicts = detectConflicts(cfg);
+	if (!headless && snapshot) {
+		const conflicts = detectConflicts(snapshot.cfg);
 		for (const c of conflicts) log.warn(`conflict (${c.kind}): ${c.detail}`);
 	}
 
+	// Initial registration: this profile's cached pool when present (instant,
+	// no network), otherwise a fetch. Headless runs never fetch and never
+	// register commands or UI — they only need the providers. A blocked launch
+	// registers nothing here; the session handlers further down still run, so a
+	// session that carries its own valid binding can recover without this
+	// process ever guessing an environment.
 	try {
-		const cached = readDiscoveryCache(
-			cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT),
-		);
-		if (cached) {
-			// Serve the last good discovery instantly so Pi startup never blocks on
-			// the ~5s proxy round-trip, then revalidate over the network in the
-			// background (applyAll is idempotent — it just re-registers providers).
-			log.info(
-				`discovery from cache (age ${Math.round(cached.ageMs / 1000)}s): ${cached.discovery.builtinProviders.length} builtin, ${cached.discovery.customPool.length} custom`,
-			);
-			try {
-				await applyDiscovery(pi, cfg, cached.discovery);
-			} catch (err) {
-				// The cached pool is unusable — applyDiscovery already dropped it, so
-				// fetch a usable one now instead of starting without providers.
-				log.warn("cached discovery unusable — fetching a fresh one:", (err as Error).message);
-				const fresh = await fetchDiscovery(cfg, resolvedKey);
-				await applyDiscovery(pi, cfg, fresh);
-			}
-			if (!headless) {
-				// Revalidate in the background, but bind the work to the session
-				// that started it: pi invalidates the extension handle when the
-				// session is replaced or reloaded, and using a captured handle
-				// afterwards throws.
-				void revalidateDiscovery(pi, cfg, resolvedKey);
-			}
-		} else if (headless) {
-			log.warn("discovery cache missing in headless run — no providers registered");
+		if (!snapshot) {
+			log.debug("no environment to register for this process");
 		} else {
-			const discovery = await fetchDiscovery(cfg, resolvedKey);
-			await applyDiscovery(pi, cfg, discovery);
+			const cached = readDiscoveryCache(snapshot.paths, snapshot.discoveryScope);
+			if (cached) {
+				log.info(
+					`discovery from cache for ${snapshot.id} (age ${Math.round(cached.ageMs / 1000)}s): ` +
+						`${cached.discovery.builtinProviders.length} builtin, ${cached.discovery.customPool.length} custom`,
+				);
+				runtime.registerDiscovery(snapshot, cached.discovery);
+				try {
+					await runtime.applySnapshot(snapshot, cached.discovery);
+				} catch (err) {
+					// The cached pool is unusable — its cache was dropped, so fetch a
+					// usable one now instead of starting without providers.
+					log.warn("cached discovery unusable — fetching a fresh one:", (err as Error).message);
+					const fresh = await fetchDiscovery(snapshot.cfg, snapshot.apiKey, snapshot.paths);
+					runtime.registerDiscovery(snapshot, fresh);
+					await runtime.applySnapshot(snapshot, fresh, pi);
+				}
+				if (!headless) {
+					// Revalidate in the background, but bind the work to the session
+					// that started it: pi invalidates the extension handle when the
+					// session is replaced or reloaded, and using a captured handle
+					// afterwards throws.
+					void revalidateDiscovery(runtime, snapshot);
+				}
+			} else if (headless) {
+				log.warn(
+					`discovery cache missing for ${snapshot.id} in headless run — no providers registered`,
+				);
+			} else {
+				const discovery = await fetchDiscovery(snapshot.cfg, snapshot.apiKey, snapshot.paths);
+				runtime.registerDiscovery(snapshot, discovery);
+				await runtime.applySnapshot(snapshot, discovery, pi);
+			}
+			await runtime.applyRoleMapping(snapshot);
 		}
 	} catch (err) {
-		log.error("initial apply failed:", (err as Error).message);
-		// Commands stay registered; user can open /cliproxy and press r to refresh.
+		log.error(`initial apply failed:`, (err as Error).message);
+		// Commands stay registered so the environment can be fixed or switched;
+		// nothing was registered for this session.
 	}
 
-	if (!headless && cfg.refreshIntervalMinutes > 0) {
-		const ms = cfg.refreshIntervalMinutes * 60_000;
-		setInterval(() => {
-			void (async () => {
-				try {
-					const c = loadConfig();
-					const k = resolveConfigValue(c.proxy.apiKey);
-					if (!k) return;
-					const d = await fetchDiscovery(c, k);
-					await applyDiscovery(pi, c, d);
-					log.debug("background refresh ok");
-				} catch (e) {
-					log.warn("background refresh failed:", (e as Error).message);
-				}
-			})();
-		}, ms);
-		log.info(`background refresh every ${cfg.refreshIntervalMinutes}m`);
+	// -------- session environment binding
+	//
+	// A resumed session keeps the environment it was created on, so history and
+	// quota context never move silently. Registration above used the launch
+	// selection; this reconciles it with the session's own binding.
+	let roleNotesReported = false;
+	const bindSession = async (ctx: ExtensionContext): Promise<void> => {
+		try {
+			const { snapshot: resolved, legacy, blocked: sessionProblem } = await runtime.bindSession(ctx, {
+				allowNetwork: !headless,
+				api: pi,
+			});
+			if (sessionProblem || !resolved) {
+				const reason = sessionProblem?.reason ?? "no AI Gateway environment is usable for this session";
+				log.error(reason);
+				if (ctx.hasUI) ctx.ui.notify(`AI Gateway: ${reason}`, "error");
+				return;
+			}
+			runtime.reportStatus(ctx, resolved);
+			const notes = runtime.roleMappingNotes();
+			if (!roleNotesReported && notes.length > 0 && ctx.hasUI) {
+				// Role selectors that could not be mapped are the one thing a user
+				// cannot see from the status line, so say it once per session.
+				roleNotesReported = true;
+				ctx.ui.notify(`AI Gateway: ${notes.join("; ")}`, "warning");
+			}
+			if (legacy && ctx.hasUI) {
+				ctx.ui.notify(
+					`this session predates environments — bound to ${describeProfile(resolved)}`,
+					"info",
+				);
+			}
+		} catch (err) {
+			log.warn("failed to bind the session environment:", (err as Error).message);
+		}
+	};
+	pi.on("session_start", async (_event, ctx) => {
+		await bindSession(ctx);
+	});
+	pi.on("session_switch", async (_event, ctx) => {
+		await bindSession(ctx);
+	});
+
+	// -------- session lifecycle
+	//
+	// A subagent that produced its result is over: release its environment
+	// binding so the shared provider registry keeps only environments that live
+	// sessions still need. A revived child re-binds from its own persisted
+	// entry, so this never strands it. A main session's agent loop ends per
+	// prompt, and the runtime ignores it.
+	pi.on("agent_end", (_event, ctx) => {
+		void runtime.endSession(ctx).catch((err: unknown) =>
+			log.debug("failed to release the session binding:", (err as Error).message),
+		);
+	});
+
+	// -------- subagent inheritance
+	//
+	// Children are rebound to this module graph and share its process settings,
+	// so they inherit the environment directly. Their spawn patterns, however,
+	// may still be written for another environment (an agent definition or a
+	// task-agent override from the global config): rewrite them for this one.
+	(pi.on as unknown as HostEventExtensions["on"])("before_subagent_spawn", (event, ctx) => {
+		const rewrite = runtime.remapSpawn(ctx, event.patterns ?? []);
+		if (!rewrite.changed) return undefined;
+		const current = runtime.snapshotFor(ctx);
+		if (!current) return { block: true, reason: "AGP environment is not bound for this session" };
+		return {
+			model: rewrite.patterns,
+			note: `${current.label} environment (${current.origin})`,
+		};
+	});
+
+	if (!headless && snapshot && snapshot.cfg.refreshIntervalMinutes > 0) {
+		const intervalMs = snapshot.cfg.refreshIntervalMinutes * 60_000;
+		pi.on("session_start", (_event, ctx) => {
+			ctx.setInterval(() => {
+				void (async () => {
+					const fresh = runtime.snapshotFor(ctx);
+					if (!fresh?.apiKey) return;
+					try {
+						const discovery = await fetchDiscovery(fresh.cfg, fresh.apiKey, fresh.paths);
+						runtime.registerDiscovery(fresh, discovery);
+						const report = await runtime.applySnapshot(fresh, discovery);
+						if (!report.superseded) await runtime.applyRoleMapping(fresh);
+						log.debug("background refresh ok");
+					} catch (e) {
+						log.warn("background refresh failed:", (e as Error).message);
+					}
+				})();
+			}, intervalMs);
+		});
+		log.info(`background refresh every ${snapshot.cfg.refreshIntervalMinutes}m`);
 	}
 
 	// -------- status-line quota segment
 	//
 	// The footer binds the selected discovery entry to its connector UUID.
 	// It never guesses codex/claude identity from a local provider name.
-	const resolvedUsageKey = headless ? "" : resolveConfigValue(cfg.proxy.usageKey);
 	// Quota is available through the pi-bridge plugin (ordinary API key) or the
-	if (!headless && (resolvedUsageKey || cfg.proxy.apiKey)) {
+	if (!headless && snapshot && (snapshot.resolvedUsageKey || snapshot.apiKey)) {
 		let lastTurnFetchMs = 0;
 		let modelPoll: NodeJS.Timeout | undefined;
 
 		// session_start: render immediately from cache (no fetch needed if fresh).
 		pi.on("session_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
-			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
+			await refreshQuotaStatus(runtime, ctx);
 			warnIfLegacyUsageSource(ctx.ui);
 			clearInterval(modelPoll);
 			let provider = ctx.model?.provider;
@@ -375,7 +524,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 				if (provider === ctx.model?.provider && modelId === ctx.model?.id) return;
 				provider = ctx.model?.provider;
 				modelId = ctx.model?.id;
-				void refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model).catch(() =>
+				void refreshQuotaStatus(runtime, ctx).catch(() =>
 					log.debug("quota model-switch refresh failed"),
 				);
 			}, 500);
@@ -390,7 +539,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 		// Revalidate authority and selected-model quota before each real turn.
 		pi.on("before_agent_start", async (_event, ctx) => {
 			if (!ctx.hasUI) return;
-			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
+			await refreshQuotaStatus(runtime, ctx);
 		});
 
 		// turn_end: after an LLM response the quota has changed. Trigger a fetch
@@ -402,13 +551,11 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 			if (now - lastTurnFetchMs < TURN_FETCH_DEBOUNCE_MS) {
 				// Within debounce window — re-render from cache only (no fetch), so
 				// rapid consecutive turns never trigger burst /api/usage calls.
-				await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model, {
-					readOnly: true,
-				});
+				await refreshQuotaStatus(runtime, ctx, { readOnly: true });
 				return;
 			}
 			lastTurnFetchMs = now;
-			await refreshQuotaStatus(cfg, resolvedUsageKey, ctx.ui, ctx.model);
+			await refreshQuotaStatus(runtime, ctx);
 		});
 	} else {
 		log.debug("usageKey not configured — quota status segment disabled");

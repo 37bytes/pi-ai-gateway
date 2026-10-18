@@ -9,6 +9,8 @@ import { resolveConfigValue } from "../config.ts";
 import { detectConflicts } from "../conflicts.ts";
 import type { Discovery } from "../fetch-models.ts";
 import { PLUGIN_USER_AGENT } from "../bridge.ts";
+import type { ProfileSnapshot } from "../profile-context.ts";
+import { agpProviderName } from "../provider-names.ts";
 import { pad } from "../ui-picker/render-text.ts";
 import type { Theme } from "../ui-picker/types.ts";
 import { clampOffset, takeSlice } from "./shell.ts";
@@ -18,6 +20,12 @@ export interface DiagnosticsViewDeps {
 	theme: Theme;
 	cfg: ProxyConfig;
 	getDiscovery: () => Discovery;
+	/** Environment this hub is editing; shown with its origin and namespace. */
+	getSnapshot: () => ProfileSnapshot;
+	/** Role-mapping outcomes worth surfacing (unresolved selectors, no API). */
+	getNotes: () => string[];
+	/** How often this host has actually fired before_subagent_spawn. */
+	getSpawnObservations: () => number;
 }
 
 export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
@@ -31,6 +39,14 @@ export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
 		const dim = (s: string) => theme.fg("dim", s);
 		const lines: string[] = [];
 
+		const snapshot = deps.getSnapshot();
+		lines.push(
+			`${dim("environment")}   ${snapshot.label} \u00b7 ${snapshot.origin} ` +
+				`(${snapshot.id}, ${snapshot.source}, generation ${snapshot.generation})`,
+		);
+		lines.push(
+			`${dim("namespace")}     ${agpProviderName(snapshot.id, "<provider>")} \u00b7 cache ${dim(snapshot.paths.dir)}`,
+		);
 		lines.push(`${dim("endpoint")}      ${cfg.proxy.endpoint || bad("(unset)")}`);
 		lines.push(
 			`${dim("apiKey")}        ${resolveConfigValue(cfg.proxy.apiKey) ? ok("resolves") : bad("empty after resolution")}`,
@@ -55,6 +71,15 @@ export function buildDiagnosticsView(deps: DiagnosticsViewDeps): HubView {
 		lines.push(`${dim("built-in")}      ${builtins}`);
 		lines.push(`${dim("custom pool")}   ${d.customPool.length} models`);
 
+		const spawns = deps.getSpawnObservations();
+		lines.push(
+			`${dim("subagent hook")}  ${spawns > 0 ? ok(`${spawns} spawn(s) observed`) : dim("not observed yet")} ` +
+				dim("(before_subagent_spawn)"),
+		);
+		const notes = deps.getNotes();
+		if (notes.length) {
+			lines.push(`${dim("role mapping")}  ${theme.fg("warning", notes.join(" \u00b7 "))}`);
+		}
 		const conflicts = detectConflicts(cfg);
 		lines.push("");
 		if (conflicts.length === 0) {

@@ -1,4 +1,9 @@
-// ~/.pi/agent/ai-gateway/config.json — migrate, load, validate, persist.
+// ~/.pi/agent/ai-gateway/profiles/<id>/config.json — migrate, load, validate, persist.
+//
+// One ProxyConfig per environment profile. The pre-profile single config
+// (~/.pi/agent/ai-gateway/config.json) is migrated into the `prod` profile by
+// profiles-migration, so `loadConfig("prod")` keeps seeing exactly the endpoint
+// and credentials the single-endpoint plugin used.
 //
 // Schema:
 //
@@ -28,30 +33,31 @@
 //   }
 
 import { execSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import {
-	constants,
-	copyFileSync,
-	existsSync,
-	linkSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import type { Api } from "@oh-my-pi/pi-ai";
 
 import { log } from "./log.ts";
+import {
+	AGP_DIR,
+	DEFAULT_PROFILE,
+	LEGACY_CONFIG_PATH as LEGACY_AGP_CONFIG_PATH,
+	type ProfilePaths,
+	profilePaths,
+	writePrivateFileAtomic,
+} from "./profiles.ts";
 
-export const CONFIG_DIR = join(homedir(), ".pi", "agent", "ai-gateway");
-export const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+/** Root of every profile-independent plugin asset (e.g. a shared key file). */
+export const CONFIG_DIR = AGP_DIR;
+/** The pre-profile config location; only migration input now. */
+export const CONFIG_PATH = LEGACY_AGP_CONFIG_PATH;
 const UPSTREAM_CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-cliproxyapi", "config.json");
-const LEGACY_CONFIG_PATH = join(homedir(), ".config", "pi-cliproxyapi", "config.json");
+/** The oldest single-endpoint config location (pre-v0.4.0). */
+const LEGACY_CLIPROXY_CONFIG_PATH = join(homedir(), ".config", "pi-cliproxyapi", "config.json");
 
 export function isLocalCheckout(): boolean {
 	return existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".git"));
@@ -72,7 +78,7 @@ function migrateConfig(
 		linkSync(temporaryPath, configPath);
 		rmSync(temporaryPath);
 		temporaryPath = undefined;
-		if (!localCheckout) unlinkSync(sourcePath);
+		if (!localCheckout) rmSync(sourcePath);
 		log.info(
 			localCheckout ? `${sourceName} config copied to` : `${sourceName} config moved to`,
 			configPath,
@@ -89,10 +95,10 @@ function migrateConfig(
 	}
 }
 
-/** Migrate the v0.4.3 upstream config into AI Gateway's namespace. */
+/** Migrate the v0.4.3 upstream config into the legacy profile's namespace. */
 export function migrateUpstreamConfig(
 	sourcePath = UPSTREAM_CONFIG_PATH,
-	configPath = CONFIG_PATH,
+	configPath = profilePaths(DEFAULT_PROFILE).configPath,
 	localCheckout = isLocalCheckout(),
 ): void {
 	migrateConfig(sourcePath, configPath, localCheckout, "upstream");
@@ -100,8 +106,8 @@ export function migrateUpstreamConfig(
 
 /** Migrate the pre-v0.4.0 config location, preserving upstream behavior. */
 export function migrateLegacyConfig(
-	legacyPath = LEGACY_CONFIG_PATH,
-	configPath = CONFIG_PATH,
+	legacyPath = LEGACY_CLIPROXY_CONFIG_PATH,
+	configPath = profilePaths(DEFAULT_PROFILE).configPath,
 	localCheckout = isLocalCheckout(),
 ): void {
 	migrateConfig(legacyPath, configPath, localCheckout, "legacy");
@@ -171,26 +177,41 @@ const DEFAULT_CONFIG: ProxyConfig = {
 	usageCacheTtlMs: 15_000,
 };
 
-export function loadConfig(): ProxyConfig {
-	migrateUpstreamConfig();
-	migrateLegacyConfig();
-	if (!existsSync(CONFIG_PATH)) {
-		log.info("config not found, using defaults at", CONFIG_PATH);
+/**
+ * Load one profile's config. Only the legacy profile also consults the
+ * pre-profile single-endpoint sources: an upstream or legacy config describes
+ * THE single endpoint this machine used before profiles existed, so it can only
+ * belong to `prod`.
+ */
+export function loadConfig(
+	profileId: string = DEFAULT_PROFILE,
+	paths: ProfilePaths = profilePaths(profileId),
+): ProxyConfig {
+	if (profileId === DEFAULT_PROFILE) {
+		migrateUpstreamConfig(UPSTREAM_CONFIG_PATH, paths.configPath);
+		migrateLegacyConfig(LEGACY_CLIPROXY_CONFIG_PATH, paths.configPath);
+	}
+	if (!existsSync(paths.configPath)) {
+		log.info(`config not found for profile ${profileId}, using defaults at`, paths.configPath);
 		return structuredClone(DEFAULT_CONFIG);
 	}
 	try {
-		const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+		const raw = JSON.parse(readFileSync(paths.configPath, "utf8"));
 		return normalizeConfig(raw);
 	} catch (err) {
-		log.error("failed to read config:", err, "— using defaults");
+		log.error(`failed to read config for profile ${profileId}:`, err, "— using defaults");
 		return structuredClone(DEFAULT_CONFIG);
 	}
 }
 
-export function saveConfig(cfg: ProxyConfig): void {
-	mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-	writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + "\n", "utf8");
-	log.info("config saved to", CONFIG_PATH);
+/** Persist one profile's config, 0600 and atomically. */
+export function saveConfig(
+	profileId: string,
+	cfg: ProxyConfig,
+	paths: ProfilePaths = profilePaths(profileId),
+): void {
+	writePrivateFileAtomic(paths.configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+	log.info(`config saved for profile ${profileId} to`, paths.configPath);
 }
 
 function normalizeConfig(raw: unknown): ProxyConfig {

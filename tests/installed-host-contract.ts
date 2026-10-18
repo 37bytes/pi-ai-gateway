@@ -152,11 +152,14 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { streamSimple } from "@oh-my-pi/pi-ai";
 import { applyAll } from ${JSON.stringify(relative(dirname(extension), join(root, "src/apply.ts")))};
+import { profilePaths } from ${JSON.stringify(relative(dirname(extension), join(root, "src/profiles.ts")))};
 export default async function(pi) {
+  const profile = "prod";
+  const providerName = (base) => "agp-" + profile + "-" + base;
   const cfg = { proxy: { endpoint: ${JSON.stringify(`http://127.0.0.1:${server.port}/v1`)}, apiKey: ${JSON.stringify(key)} }, builtinProviders: {}, customProviders: {}, registerAll: true, discoveryExcludes: [], overrides: {}, refreshIntervalMinutes: 0, usageCacheTtlMs: 15000 };
   const entries = [["deepseek", "deepseek-chat"], ["opencode", "deepseek-v4.1-flash"], ["codex", "gpt-6-astra"]].map(([provider, id]) => ({ id: provider + "/" + id, wireId: provider + "/" + id, selectorId: id, providerId: "fixture-" + provider, providerKind: provider, canonicalModel: id, name: "Fixture " + provider, api: provider === "codex" ? "openai-responses" : "openai-completions", suggestedProvider: provider, ownedBy: provider, metadataState: "catalog", priceState: "known", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 8192, cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2 } }));
   const discovery = { source: "well-known", upstreamVersion: "fixture", builtinProviders: [], customPool: entries, serverDiscoveryExcludes: [], upstreamTotal: entries.length };
-  await applyAll(pi, cfg, discovery);
+  await applyAll(pi, cfg, discovery, { profile, profileIds: ["prod", "test"], paths: profilePaths(profile) });
   pi.on("session_start", async (_event, ctx) => {
     try {
       const sessionId = ctx.sessionManager.getSessionId();
@@ -165,25 +168,25 @@ export default async function(pi) {
       for (const strategy of ["offline", "online"]) {
         await ctx.modelRegistry.refreshRuntimeProviders(strategy);
         for (const entry of entries) {
-          const models = ctx.modelRegistry.getAll().filter(model => model.provider === entry.suggestedProvider);
+          const models = ctx.modelRegistry.getAll().filter(model => model.provider === providerName(entry.suggestedProvider));
           assert.deepEqual(models.map(model => model.id), [entry.selectorId], "built-in discovery must not reintroduce foreign routes");
-          assert.ok(models.every(model => model.api === "agp:" + entry.suggestedProvider + ":" + entry.api));
+          assert.ok(models.every(model => model.api === "agp:" + providerName(entry.suggestedProvider) + ":" + entry.api));
         }
       }
       assert.equal(ctx.models.resolve("deepseek/opencode/deepseek-v4.1-flash"), undefined);
       const context = { messages: [{ role: "user", content: "local fixture", timestamp: 0 }] };
       const cases = [
-        { selector: "deepseek/deepseek-chat" },
-        { selector: "opencode/deepseek-v4.1-flash" },
-        { selector: "opencode/deepseek-v4.1-flash" },
-        { selector: "codex/gpt-6-astra" },
-        { selector: "opencode/deepseek-v4.1-flash", modelHeaders: { "x-session-id": "model-session", "x-opencode-session": "model-conversation" } },
-        { selector: "opencode/deepseek-v4.1-flash", modelHeaders: { "x-session-id": "model-session", "x-opencode-session": "model-conversation" }, headers: { "x-session-id": "caller-session", "x-opencode-session": "caller-conversation" } },
+        { selector: providerName("deepseek") + "/deepseek-chat" },
+        { selector: providerName("opencode") + "/deepseek-v4.1-flash" },
+        { selector: providerName("opencode") + "/deepseek-v4.1-flash" },
+        { selector: providerName("codex") + "/gpt-6-astra" },
+        { selector: providerName("opencode") + "/deepseek-v4.1-flash", modelHeaders: { "x-session-id": "model-session", "x-opencode-session": "model-conversation" } },
+        { selector: providerName("opencode") + "/deepseek-v4.1-flash", modelHeaders: { "x-session-id": "model-session", "x-opencode-session": "model-conversation" }, headers: { "x-session-id": "caller-session", "x-opencode-session": "caller-conversation" } },
       ];
       for (const item of cases) {
         const selected = ctx.models.resolve(item.selector);
         assert.ok(selected);
-        assert.equal(selected.api, "agp:" + selected.provider + ":" + (selected.provider === "codex" ? "openai-responses" : "openai-completions"));
+        assert.equal(selected.api, "agp:" + selected.provider + ":" + (selected.provider === providerName("codex") ? "openai-responses" : "openai-completions"));
         assert.equal(selected.baseUrl, cfg.proxy.endpoint);
         assert.equal(await pi.setModel(selected), true);
         const hostKey = await ctx.modelRegistry.getApiKey(selected);
@@ -216,7 +219,7 @@ export default async function(pi) {
 				"--extension",
 				extension,
 				"--model",
-				"opencode/deepseek-v4.1-flash",
+				"agp-prod-opencode/deepseek-v4.1-flash",
 				"--print",
 				"local fixture",
 			],
@@ -244,7 +247,7 @@ export default async function(pi) {
 		assert.equal(status, 0, "installed OMP selection/transport fixture failed");
 		const result = JSON.parse(readFileSync(receipt, "utf8"));
 		assert.equal(result.outcome, "stop");
-		assert.equal(result.selected, "opencode/deepseek-v4.1-flash");
+		assert.equal(result.selected, "agp-prod-opencode/deepseek-v4.1-flash");
 		sessions.push(result.sessionId);
 		const calls = requests.slice(run * 6);
 		assert.equal(

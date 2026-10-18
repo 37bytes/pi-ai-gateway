@@ -16,6 +16,7 @@ import { PLUGIN_USER_AGENT } from "./bridge.ts";
 import { writeDiscoveryCache } from "./cache.ts";
 import { cacheScope } from "./cache-scope.ts";
 import type { CustomProviderModelConfig, ProxyConfig } from "./config.ts";
+import type { ProfilePaths } from "./profiles.ts";
 import { CONTRACT_HEADER, PREFERRED_CONTRACT } from "./fetch-usage.ts";
 import { log } from "./log.ts";
 
@@ -388,14 +389,18 @@ function normalizeModel(m: Partial<DiscoveryModelEntry> & { id: string }): Disco
 
 // --------------------------------------------------------------------------- public
 
-export async function fetchDiscovery(cfg: ProxyConfig, resolvedKey: string): Promise<Discovery> {
+export async function fetchDiscovery(
+	cfg: ProxyConfig,
+	resolvedKey: string,
+	paths: ProfilePaths,
+): Promise<Discovery> {
 	const scope = cacheScope(cfg.proxy.endpoint, resolvedKey, PREFERRED_CONTRACT);
 	const wk = await tryWellKnown(cfg, resolvedKey);
 	if (wk) {
 		log.info(
 			`discovery via /.well-known/pi: ${wk.builtinProviders.length} builtin, ${wk.customPool.length} custom`,
 		);
-		writeDiscoveryCache(wk, scope);
+		writeDiscoveryCache(paths, wk, scope);
 		return wk;
 	}
 	if (!resolvedKey) {
@@ -408,7 +413,7 @@ export async function fetchDiscovery(cfg: ProxyConfig, resolvedKey: string): Pro
 	log.info(
 		`discovery via /v1/models: ${d.builtinProviders.length} builtin, ${d.customPool.length} custom`,
 	);
-	writeDiscoveryCache(d, scope);
+	writeDiscoveryCache(paths, d, scope);
 	return d;
 }
 

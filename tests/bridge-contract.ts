@@ -17,6 +17,7 @@ const { fetchDiscovery } = await import("../src/fetch-models.ts");
 const { clearUsageCache, fetchUsage, lastUsageContract, lastUsageSource } = await import(
 	"../src/fetch-usage.ts"
 );
+const { profilePaths } = await import("../src/profiles.ts");
 
 const cfg = {
 	proxy: {
@@ -97,7 +98,7 @@ try {
 		}
 		throw new Error(`unexpected discovery request: ${call.path}`);
 	});
-	const viaBridge = await fetchDiscovery(cfg, "gateway-key");
+	const viaBridge = await fetchDiscovery(cfg, "gateway-key", profilePaths("prod"));
 	assert.equal(viaBridge.source, "well-known");
 	assert.deepEqual(
 		calls.map((call) => call.path),
@@ -115,7 +116,7 @@ try {
 		}
 		throw new Error(`unexpected discovery fallback request: ${call.path}`);
 	});
-	const fallback = await fetchDiscovery(cfg, "gateway-key");
+	const fallback = await fetchDiscovery(cfg, "gateway-key", profilePaths("prod"));
 	assert.equal(fallback.source, "v1-models");
 	assert.deepEqual(
 		calls.map((call) => call.path),

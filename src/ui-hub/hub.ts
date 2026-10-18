@@ -5,15 +5,16 @@
 //   global keys: [ ] / 1 2 3 switch tab \u00b7 r refresh \u00b7 e setup \u00b7 s save \u00b7 q close
 //   per-view keys: see each view's footerHint()
 
-import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { type Component, getKeybindings, matchesKey } from "@oh-my-pi/pi-tui";
 
-import { applyAll } from "../apply.ts";
 import type { ProxyConfig } from "../config.ts";
-import { loadConfig, resolveConfigValue, saveConfig } from "../config.ts";
+import { resolveConfigValue, saveConfig } from "../config.ts";
 import type { Discovery } from "../fetch-models.ts";
 import { fetchDiscovery } from "../fetch-models.ts";
 import { clearUsageCache } from "../fetch-usage.ts";
+import type { ProfileSnapshot } from "../profile-context.ts";
+import type { SessionRuntime } from "../session-runtime.ts";
 import { frame } from "../ui-frame.ts";
 import type { OverlayTui, Theme } from "../ui-picker/types.ts";
 import { runSetup } from "../ui-setup.ts";
@@ -24,21 +25,27 @@ import { buildModelsView, type ModelsView } from "./view-models.ts";
 import { buildUsageView, type UsageView } from "./view-usage.ts";
 
 export interface HubDeps {
-	pi: ExtensionAPI;
 	ctx: ExtensionCommandContext;
 	tui: OverlayTui;
 	theme: Theme;
+	/** Environment this hub was opened on; every write goes through its profile. */
+	snapshot: ProfileSnapshot;
+	runtime: SessionRuntime;
 	cfg: ProxyConfig; // mutable draft owned by the hub
 	discovery: Discovery;
 	done: () => void;
 }
 
 export function buildHub(deps: HubDeps): Component & { handleInput(data: string): void } {
-	const { pi, ctx, tui, theme, cfg, done } = deps;
+	const { ctx, tui, theme, cfg, done, runtime } = deps;
 	let discovery = deps.discovery;
 	let dirty = false; // unsaved config changes
 	let flash = ""; // transient status message (save/refresh/setup feedback)
 
+	let snapshot = deps.snapshot;
+	// The hub is only opened for a bound session, so this is a narrowing helper:
+	// a fresh read of the same session's environment, or the one we opened with.
+	const currentSnapshot = (): ProfileSnapshot => runtime.snapshotFor(ctx) ?? snapshot;
 	const models: ModelsView = buildModelsView({
 		tui,
 		theme,
@@ -50,11 +57,14 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 			flash = "";
 		},
 	});
-	const usage: UsageView = buildUsageView({ tui, theme, cfg });
+	const usage: UsageView = buildUsageView({ tui, theme, getSnapshot: () => snapshot });
 	const diagnostics: HubView = buildDiagnosticsView({
 		theme,
 		cfg,
 		getDiscovery: () => discovery,
+		getSnapshot: () => snapshot,
+		getNotes: () => runtime.roleMappingNotes(),
+		getSpawnObservations: () => runtime.spawnObservations(),
 	});
 	const views: HubView[] = [models, usage, diagnostics];
 	let activeIdx = 0;
@@ -69,15 +79,17 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 
 	const save = (): void => {
 		flash = theme.fg("dim", "saving\u2026");
-		saveConfig(cfg);
+		saveConfig(snapshot.id, cfg, snapshot.paths);
 		tui.requestRender();
-		void applyAll(pi, cfg, discovery)
-			.then((rep) => {
+		// The endpoint/key may have changed, so re-snapshot before applying: the
+		// new config's cache scope and credentials are what the providers need.
+		snapshot = currentSnapshot();
+		void runtime
+			.applySnapshot(snapshot, discovery)
+			.then((rep) => (rep.superseded ? null : runtime.applyRoleMapping(snapshot)))
+			.then(() => {
 				dirty = false;
-				flash = theme.fg(
-					"success",
-					`\u2713 settings saved \u00b7 ${rep.registered.length} registered, ${rep.skipped.length} skipped`,
-				);
+				flash = theme.fg("success", `\u2713 ${snapshot.label} settings saved`);
 				tui.requestRender();
 			})
 			.catch((e: unknown) => {
@@ -90,12 +102,14 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 		flash = theme.fg("dim", "refreshing\u2026");
 		tui.requestRender();
 		try {
-			const key = resolveConfigValue(cfg.proxy.apiKey);
-			discovery = await fetchDiscovery(cfg, key);
+			snapshot = currentSnapshot();
+			discovery = await fetchDiscovery(snapshot.cfg, snapshot.apiKey, snapshot.paths);
 			clearUsageCache();
 			models.rebuild();
 			usage.reload();
-			const rep = await applyAll(pi, cfg, discovery);
+			runtime.registerDiscovery(snapshot, discovery);
+			const rep = await runtime.applySnapshot(snapshot, discovery);
+			if (!rep.superseded) await runtime.applyRoleMapping(snapshot);
 			flash = theme.fg(
 				"success",
 				`\u2713 refreshed \u00b7 ${rep.registered.length} providers (${discovery.source})`,
@@ -107,14 +121,15 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 	};
 
 	const setup = async (): Promise<void> => {
-		const ok = await runSetup(ctx, true);
+		const ok = await runSetup(ctx, { profileId: snapshot.id, forceAll: true });
 		if (!ok) {
 			tui.requestRender();
 			return;
 		}
 		// Pull fresh credentials but keep the user's in-hub model edits.
-		const reloaded = loadConfig();
-		cfg.proxy = { ...cfg.proxy, ...reloaded.proxy };
+		const reloaded = currentSnapshot();
+		cfg.proxy = { ...cfg.proxy, ...reloaded.cfg.proxy };
+		snapshot = reloaded;
 		await refresh();
 	};
 
@@ -148,6 +163,7 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 				? theme.fg("warning", "\u25cf unsaved \u2014 press s to save")
 				: theme.fg("dim", "\u2713 saved");
 		return [
+			`${theme.fg("dim", "env")} ${theme.bold(snapshot.label)} ${theme.fg("dim", snapshot.origin)}`,
 			`${theme.fg("dim", "endpoint")} ${epShort}`,
 			`${theme.fg("dim", "key")} ${keyOk ? theme.fg("success", "\u2713") : theme.fg("error", "\u2717")}`,
 			`${theme.fg("dim", "providers")} ${provCount}`,
@@ -182,7 +198,7 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 
 		return frame(theme, {
 			width,
-			title: " /cliproxy ",
+			title: ` /cliproxy · ${snapshot.label} `,
 			lines,
 			footer: {
 				hint: active().footerHint(),

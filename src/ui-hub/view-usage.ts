@@ -3,9 +3,8 @@
 
 import { matchesKey } from "@oh-my-pi/pi-tui";
 
-import type { ProxyConfig } from "../config.ts";
-import { resolveConfigValue } from "../config.ts";
 import { clearUsageCache, fetchUsage, type UsageDocument } from "../fetch-usage.ts";
+import type { ProfileSnapshot } from "../profile-context.ts";
 import { pad } from "../ui-picker/render-text.ts";
 import type { OverlayTui, Theme } from "../ui-picker/types.ts";
 import { renderUsage } from "../ui-usage.ts";
@@ -15,7 +14,8 @@ import type { HubView } from "./types.ts";
 export interface UsageViewDeps {
 	tui: OverlayTui;
 	theme: Theme;
-	cfg: ProxyConfig;
+	/** Read lazily so a save/refresh in the hub is reflected on the next load. */
+	getSnapshot: () => ProfileSnapshot;
 }
 
 export interface UsageView extends HubView {
@@ -24,7 +24,7 @@ export interface UsageView extends HubView {
 }
 
 export function buildUsageView(deps: UsageViewDeps): UsageView {
-	const { tui, theme, cfg } = deps;
+	const { tui, theme } = deps;
 	let status: "idle" | "loading" | "ready" | "error" = "idle";
 	let doc: UsageDocument | null = null;
 	let errMsg = "";
@@ -35,8 +35,11 @@ export function buildUsageView(deps: UsageViewDeps): UsageView {
 	const load = (force: boolean): void => {
 		status = "loading";
 		tui.requestRender();
-		const usageKey = resolveConfigValue(cfg.proxy.usageKey);
-		void fetchUsage(cfg, usageKey, { force })
+		const snapshot = deps.getSnapshot();
+		void fetchUsage(snapshot.cfg, snapshot.resolvedUsageKey, {
+			force,
+			resolvedApiKey: snapshot.apiKey,
+		})
 			.then((d) => {
 				doc = d;
 				status = "ready";

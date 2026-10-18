@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Toggle AI Gateway between this local checkout and its published package.
 # Usage: ./scripts/switch.sh {dev|prod|status}
+#
+# This is the CODE-SOURCE channel: which copy of the plugin Pi loads. It does
+# NOT select an AGP environment — prod and test both load whichever copy is
+# installed here, and the environment is chosen per session with AGP_PROFILE /
+# --agp-profile (see scripts/omp-prod and scripts/omp-test).
 
 set -euo pipefail
 mode="${1:-status}"

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Launch OMP on the AGP PRODUCTION environment.
+#
+#   omp-prod                     # new session on prod
+#   omp-prod --resume <id>       # a session that is bound to prod keeps prod
+#   omp-prod -p "ask something"  # headless run: providers come from prod's cache
+#
+# The environment is selected through AGP_PROFILE (read by the plugin, and
+# inherited by child processes OMP spawns). The generated role mapping is passed
+# as a settings overlay with --config, which OMP merges above the global config
+# and forwards to children. No credential is ever placed in argv: the profile's
+# key is resolved by the plugin from its own config file (0600).
+
+set -euo pipefail
+
+profile="prod"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$script_dir/omp-profile-launch.sh"
+
+launch_profile "$profile" "$@"

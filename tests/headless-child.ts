@@ -70,7 +70,6 @@ try {
 
 	const providers: string[] = [];
 	const commands: string[] = [];
-	const events: string[] = [];
 	await aiGateway({
 		registerProvider(name: string) {
 			providers.push(name);
@@ -78,14 +77,15 @@ try {
 		registerCommand(name: string) {
 			commands.push(name);
 		},
-		on(name: string) {
-			events.push(name);
+		registerFlag() {},
+		getFlag() {
+			return undefined;
 		},
+		on() {},
 	} as unknown as Parameters<typeof aiGateway>[0]);
 
-	assert.deepEqual(providers, ["openai"]);
+	assert.deepEqual(providers, ["agp-prod-openai"]);
 	assert.deepEqual(commands, []);
-	assert.deepEqual(events, []);
 	assert.equal(fetches, 0);
 } finally {
 	globalThis.fetch = originalFetch;

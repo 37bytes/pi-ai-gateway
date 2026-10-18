@@ -27,12 +27,15 @@ process.env.HOME = home;
 const { applyAll, mergeModelMetadata, registrationConfig } = await import("../src/apply.ts");
 const { fetchDiscovery } = await import("../src/fetch-models.ts");
 const { fetchUsage, clearUsageCache } = await import("../src/fetch-usage.ts");
-const { DISCOVERY_CACHE_PATH, readDiscoveryCache, writeDiscoveryCache } = await import(
-	"../src/cache.ts"
-);
-const { USAGE_CACHE_PATH, readUsageCache, writeUsageCache } = await import(
-	"../src/usage-shared-cache.ts"
-);
+const { readDiscoveryCache, writeDiscoveryCache } = await import("../src/cache.ts");
+const { readUsageCache, writeUsageCache } = await import("../src/usage-shared-cache.ts");
+const { profilePaths } = await import("../src/profiles.ts");
+
+const applyOptions = {
+	profile: "prod",
+	profileIds: ["prod", "test"] as const,
+	paths: profilePaths("prod"),
+};
 
 const cfg: ProxyConfig = {
 	proxy: { endpoint: "https://gateway.test/v1", apiKey: "fixture-key", providerPrefix: "cpa" },
@@ -239,7 +242,7 @@ try {
 			builtinProviders: {},
 			customModelPool: [{ ...model, suggestedProviderName: "codex" }],
 		})) as typeof fetch;
-	const discovered = await fetchDiscovery(cfg, "fixture-key");
+	const discovered = await fetchDiscovery(cfg, "fixture-key", profilePaths("prod"));
 	assert.equal(
 		discovered.customPool[0]?.suggestedProvider,
 		"codex",
@@ -261,7 +264,7 @@ try {
 			schemaVersion: 1,
 			customModelPool: [{ ...unknownRaw, suggestedProviderName: "codex" }],
 		})) as typeof fetch;
-	const unknown = (await fetchDiscovery(cfg, "fixture-key")).customPool[0]!;
+	const unknown = (await fetchDiscovery(cfg, "fixture-key", profilePaths("prod"))).customPool[0]!;
 	for (const key of ["contextWindow", "maxTokens", "reasoning", "input", "cost"])
 		assert.equal(Object.hasOwn(unknown, key), false, key);
 	const overridden = mergeModelMetadata(
@@ -308,12 +311,12 @@ try {
 			},
 		},
 	};
-	const effective = registrationConfig(explicit, discovery);
+	const effective = registrationConfig(explicit, discovery, "prod");
 	assert.deepEqual(
-		effective.customProviders["local-private"],
+		effective.customProviders["agp-prod-local-private"],
 		explicit.customProviders["local-private"],
 	);
-	assert.equal(effective.customProviders.codex?.models[0]?.name, "Operator Astra");
+	assert.equal(effective.customProviders["agp-prod-codex"]?.models[0]?.name, "Operator Astra");
 	assert.equal(explicit.customProviders.codex?.models[0]?.maxTokens, 64_000);
 	const retainedRegistrations = new Map<string, ProviderConfig>();
 	await applyAll(
@@ -324,15 +327,19 @@ try {
 		} as ExtensionAPI,
 		explicit,
 		discovery,
+		applyOptions,
 	);
 	assert.equal(
-		retainedRegistrations.get("retained-custom")?.models?.[0]?.name,
+		retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.name,
 		"Retained operator model",
 	);
-	assert.equal(retainedRegistrations.get("retained-custom")?.models?.[0]?.contextWindow, 512_000);
-	assert.equal(retainedRegistrations.get("retained-custom")?.models?.[0]?.cost.input, 17);
-	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.maxTokens, 64_000);
-	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.cost.input, 10);
+	assert.equal(
+		retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.contextWindow,
+		512_000,
+	);
+	assert.equal(retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.cost.input, 17);
+	assert.equal(retainedRegistrations.get("agp-prod-codex")?.models?.[0]?.maxTokens, 64_000);
+	assert.equal(retainedRegistrations.get("agp-prod-codex")?.models?.[0]?.cost.input, 10);
 
 	const liveRegistry = new Map<string, ProviderConfig>([["another-extension", {}]]);
 	const liveAPI = {
@@ -349,23 +356,51 @@ try {
 		wireId: "cx/gpt-6-astra",
 		suggestedProvider: "cx",
 	};
-	await applyAll(liveAPI, explicit, { ...discovery, customPool: [model, legacyAlias] });
-	assert.ok(liveRegistry.has("cx"), "fixture must start with an announced legacy namespace");
+	await applyAll(liveAPI, explicit, { ...discovery, customPool: [model, legacyAlias] }, applyOptions);
+	assert.ok(liveRegistry.has("agp-prod-cx"), "fixture must start with an announced legacy namespace");
 	await assert.rejects(
-		applyAll(liveAPI, explicit, {
-			...discovery,
-			customPool: [{ ...model, api: "anthropic-messages" }],
-		}),
+		applyAll(
+			liveAPI,
+			explicit,
+			{
+				...discovery,
+				customPool: [
+					{
+						...model,
+						suggestedProvider: "opencode",
+						providerId: "connector-b",
+						api: "openai-responses",
+					},
+					{
+						...model,
+						id: "opencode/glm-x",
+						wireId: "opencode/glm-x",
+						selectorId: "glm-x",
+						suggestedProvider: "opencode",
+						providerId: "connector-b",
+						api: "anthropic-messages",
+					},
+				],
+			},
+			applyOptions,
+		),
+		/Conflicting API families/,
 	);
-	assert.ok(liveRegistry.has("cx"), "failed refresh must not retire the last successful catalog");
-	await applyAll(liveAPI, explicit, discovery);
+	assert.ok(
+		liveRegistry.has("agp-prod-cx"),
+		"failed refresh must not retire the last successful catalog",
+	);
+	await applyAll(liveAPI, explicit, discovery, applyOptions);
 	assert.equal(
-		liveRegistry.has("cx"),
+		liveRegistry.has("agp-prod-cx"),
 		false,
 		"retired namespace must disappear without restarting OMP",
 	);
-	assert.ok(liveRegistry.has("codex"));
-	assert.ok(liveRegistry.has("retained-custom"), "explicit current custom group must remain");
+	assert.ok(liveRegistry.has("agp-prod-codex"));
+	assert.ok(
+		liveRegistry.has("agp-prod-retained-custom"),
+		"explicit current custom group must remain",
+	);
 	assert.ok(liveRegistry.has("another-extension"), "another extension's providers must remain");
 
 	process.env.PI_AI_GATEWAY_LATENCY = "1";
@@ -385,9 +420,10 @@ try {
 			} as ExtensionAPI,
 			cfg,
 			{ ...discovery, customPool: [{ ...model, api }] },
+			applyOptions,
 		);
 		assert.equal(registrations.length, 1);
-		assert.equal(registrations[0]!.name, "codex");
+		assert.equal(registrations[0]!.name, "agp-prod-codex");
 		const registered = registrations[0]!.config;
 		assert.notEqual(
 			registered.apiKey,
@@ -438,7 +474,7 @@ try {
 		// Stock OMP's registered agp:* model has no native compatibility record.
 		const selected = {
 			...registered.models![0]!,
-			provider: "codex",
+			provider: "agp-prod-codex",
 			api: registered.api!,
 			baseUrl: registered.baseUrl!,
 			compat: undefined,
@@ -627,18 +663,19 @@ try {
 	assert.doesNotMatch(genericQuota, /5h|7d|unknown|Other|99|100/);
 
 	const scope = cacheScope(cfg.proxy.endpoint, "fixture-key", 2);
-	writeDiscoveryCache(discovery, scope);
-	assert.equal(readDiscoveryCache(scope)?.discovery.customPool[0]?.id, model.id);
-	assert.equal(readDiscoveryCache(cacheScope("https://other.test/v1", "fixture-key", 2)), null);
-	assert.equal(readDiscoveryCache(cacheScope(cfg.proxy.endpoint, "different-key", 2)), null);
-	assert.equal(readDiscoveryCache(cacheScope(cfg.proxy.endpoint, "fixture-key", 3)), null);
-	assert.doesNotMatch(readFileSync(DISCOVERY_CACHE_PATH, "utf8"), /fixture-key/);
-	writeFileSync(DISCOVERY_CACHE_PATH, JSON.stringify({ savedAt: Date.now(), discovery }));
-	assert.equal(readDiscoveryCache(scope), null, "pre-scope caches must be invalidated");
-	writeUsageCache(usage, scope);
-	assert.deepEqual(readUsageCache(scope)?.doc, usage);
-	assert.equal(readUsageCache(cacheScope(cfg.proxy.endpoint, "different-key", 2)), null);
-	assert.doesNotMatch(readFileSync(USAGE_CACHE_PATH, "utf8"), /fixture-key/);
+	const prodPaths = profilePaths("prod");
+	writeDiscoveryCache(prodPaths, discovery, scope);
+	assert.equal(readDiscoveryCache(prodPaths, scope)?.discovery.customPool[0]?.id, model.id);
+	assert.equal(readDiscoveryCache(prodPaths, cacheScope("https://other.test/v1", "fixture-key", 2)), null);
+	assert.equal(readDiscoveryCache(prodPaths, cacheScope(cfg.proxy.endpoint, "different-key", 2)), null);
+	assert.equal(readDiscoveryCache(prodPaths, cacheScope(cfg.proxy.endpoint, "fixture-key", 3)), null);
+	assert.doesNotMatch(readFileSync(prodPaths.discoveryCachePath, "utf8"), /fixture-key/);
+	writeFileSync(prodPaths.discoveryCachePath, JSON.stringify({ savedAt: Date.now(), discovery }));
+	assert.equal(readDiscoveryCache(prodPaths, scope), null, "pre-scope caches must be invalidated");
+	writeUsageCache(prodPaths, usage, scope);
+	assert.deepEqual(readUsageCache(prodPaths, scope)?.doc, usage);
+	assert.equal(readUsageCache(prodPaths, cacheScope(cfg.proxy.endpoint, "different-key", 2)), null);
+	assert.doesNotMatch(readFileSync(prodPaths.usageCachePath, "utf8"), /fixture-key/);
 
 	clearUsageCache();
 	const authorized: string[] = [];

@@ -3,8 +3,16 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { UsageAccount, UsageDocument, UsageGroup } from "../src/fetch-usage.ts";
+import {
+	PREFERRED_CONTRACT,
+	type UsageAccount,
+	type UsageDocument,
+	type UsageGroup,
+} from "../src/fetch-usage.ts";
 import { cacheScope } from "../src/cache-scope.ts";
+import { buildSnapshot, describeProfile } from "../src/profile-context.ts";
+import { profilePaths } from "../src/profiles.ts";
+import { PROFILE_STATUS_KEY } from "../src/session-runtime.ts";
 import { renderQuotaSegment } from "../src/status-quota.ts";
 import { renderUsage } from "../src/ui-usage.ts";
 
@@ -264,12 +272,12 @@ try {
 	// These imports intentionally exercise the plugin after HOME/clock isolation:
 	// their module-load cache paths must never bind to the real user directory.
 	const { default: aiGateway } = await import("../index.ts");
-	const { USAGE_CACHE_PATH, USAGE_LOCK_PATH, USAGE_CACHE_TTL_MS, writeUsageCache } = await import(
-		"../src/usage-shared-cache.ts"
-	);
-	const configDir = join(home, ".pi/agent/ai-gateway");
-	mkdirSync(configDir, { recursive: true });
-	const configPath = join(configDir, "config.json");
+	const { USAGE_CACHE_TTL_MS, writeUsageCache } = await import("../src/usage-shared-cache.ts");
+	// Every piece of state is addressed by profile now, and only `prod` migrates
+	// the pre-profile single-endpoint layout — which this isolated HOME never had.
+	const prodPaths = profilePaths("prod");
+	mkdirSync(prodPaths.dir, { recursive: true });
+	const configPath = prodPaths.configPath;
 	writeFileSync(configPath, JSON.stringify(cfg));
 	type FixtureContext = {
 		hasUI: boolean;
@@ -293,13 +301,15 @@ try {
 		},
 	} as unknown as ExtensionAPI);
 	let status: string | undefined;
+	const statusByKey: Record<string, string | undefined> = {};
 	const ctx: FixtureContext = {
 		hasUI: true,
-		model: { provider: "codex", id: modelId },
+		model: { provider: "agp-prod-codex", id: modelId },
 		ui: {
 			theme,
 			notify() {},
-			setStatus(_key, value) {
+			setStatus(key, value) {
+				statusByKey[key] = value;
 				status = value;
 			},
 		},
@@ -323,8 +333,8 @@ try {
 	);
 	assert.equal(usageReads, 2);
 
-	writeFileSync(USAGE_LOCK_PATH, "other-fixture-process");
-	utimesSync(USAGE_LOCK_PATH, now / 1000, now / 1000);
+	writeFileSync(prodPaths.usageLockPath, "other-fixture-process");
+	utimesSync(prodPaths.usageLockPath, now / 1000, now / 1000);
 	const beforeLock = usageReads;
 	assert.equal(
 		await emit("before_agent_start"),
@@ -332,7 +342,7 @@ try {
 		"lock contention carries local staleness",
 	);
 	assert.equal(usageReads, beforeLock);
-	rmSync(USAGE_LOCK_PATH);
+	rmSync(prodPaths.usageLockPath);
 
 	assert.equal(await emit("turn_end"), "quota stale");
 	const beforeReadOnly = usageReads;
@@ -357,13 +367,19 @@ try {
 	// footer on the previous cache, and must reuse a window refreshed moments ago.
 	const switchReads = usageReads;
 	assert.match((await emit("session_start"))!, /7d .* 37/);
+	const prodSnapshot = buildSnapshot({ id: "prod", source: "launch-env" }, "quota", 1);
+	assert.equal(
+		statusByKey[PROFILE_STATUS_KEY],
+		describeProfile(prodSnapshot),
+		"the profile segment must name the active environment",
+	);
 	now += USAGE_CACHE_TTL_MS;
-	ctx.model = { provider: "deepseek", id: switchModelId };
+	ctx.model = { provider: "agp-prod-deepseek", id: switchModelId };
 	await delay(900);
 	assert.equal(usageReads, switchReads + 1, "a model switch refreshes an aged shared cache once");
 	assert.match(status!, /7d .* 61/, "the switched model shows its own connector window");
 	assert.doesNotMatch(status!, /stale/);
-	ctx.model = { provider: "codex", id: modelId };
+	ctx.model = { provider: "agp-prod-codex", id: modelId };
 	await delay(900);
 	assert.equal(
 		usageReads,
@@ -406,8 +422,11 @@ try {
 	assert.match((await emit("before_agent_start"))!, /7d .* 37/);
 	assert.equal(usageReads, beforeRestoredAuthority);
 
-	const scope = cacheScope(cfg.proxy.endpoint, cfg.proxy.apiKey, 2);
+	// The fixture config carries no usageKey, so the plugin's resolved usage key
+	// is "" — the scope still has to be the plugin's own profile-scoped shape.
+	const scope = cacheScope(cfg.proxy.endpoint, cfg.proxy.apiKey, PREFERRED_CONTRACT, "");
 	writeUsageCache(
+		prodPaths,
 		{
 			...currentDocument,
 			accounts: [
@@ -421,7 +440,7 @@ try {
 		"quota stale",
 		"even a fresh client cache cannot resurrect an expired reset",
 	);
-	const stored = JSON.parse(readFileSync(USAGE_CACHE_PATH, "utf8"));
+	const stored = JSON.parse(readFileSync(prodPaths.usageCachePath, "utf8"));
 	assert.equal(stored.doc.cache.stale, false, "local freshness must not rewrite server provenance");
 	assert.equal(
 		stored.doc.accounts[0].groups[0].state,

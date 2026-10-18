@@ -9,9 +9,10 @@
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { applyDiscovery } from "../src/apply.ts";
 import { cacheScope } from "../src/cache-scope.ts";
+import { profilePaths } from "../src/profiles.ts";
 
 const home = process.env.PI_GATEWAY_TEST_HOME!;
 assert.ok(home && process.env.HOME === home, "Run through scripts/run-isolated.ts");
@@ -56,8 +57,9 @@ function rawEntry(id: string, selector: string, provider: string) {
 	};
 }
 
-function seedCache(configDir: string, pool: unknown[]): string {
-	const path = join(configDir, "discovery-cache.json");
+function seedCache(pool: unknown[]): string {
+	const path = profilePaths("prod").discoveryCachePath;
+	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(
 		path,
 		JSON.stringify({
@@ -105,6 +107,10 @@ async function runExtension(): Promise<Array<{ name: string; models: number }>> 
 			registered.push({ name, models });
 		},
 		registerCommand() {},
+		registerFlag() {},
+		getFlag() {
+			return undefined;
+		},
 		on() {},
 	} as unknown as Parameters<typeof aiGateway>[0]);
 	return registered;
@@ -121,7 +127,7 @@ try {
 		JSON.stringify({ proxy: { endpoint: ENDPOINT, apiKey: API_KEY }, registerAll: true }),
 	);
 
-	const poisonedCache = seedCache(configDir, [
+	const poisonedCache = seedCache([
 		cachedEntry("codex/codex/gpt-5.6-terra", "codex/gpt-5.6-terra", "codex"),
 	]);
 	const gateway = stubGateway([
@@ -131,8 +137,8 @@ try {
 
 	const registered = await runExtension();
 	const names = registered.map((entry) => entry.name).sort();
-	assert.deepEqual(names, ["codex", "opencode"], `expected the fresh pool to register, got ${JSON.stringify(registered)}`);
-	assert.equal(registered.find((entry) => entry.name === "codex")?.models, 1);
+	assert.deepEqual(names, ["agp-prod-codex", "agp-prod-opencode"], `expected the fresh pool to register, got ${JSON.stringify(registered)}`);
+	assert.equal(registered.find((entry) => entry.name === "agp-prod-codex")?.models, 1);
 	assert.ok(gateway.fetches() > 0, "a rejected cached discovery must trigger a network fetch");
 
 	const rewritten = JSON.parse(readFileSync(poisonedCache, "utf8")) as { discovery: { customPool: Array<{ id: string; selectorId?: string }> } };
@@ -145,7 +151,7 @@ try {
 
 	// A discovery the host rejects is dropped, never left on disk for the next
 	// start to replay.
-	const rejectedPath = seedCache(configDir, [
+	const rejectedPath = seedCache([
 		cachedEntry("codex/codex/gpt-5.6-terra", "codex/gpt-5.6-terra", "codex"),
 	]);
 	const poisoned = {
@@ -158,9 +164,19 @@ try {
 	} as unknown as Parameters<typeof applyDiscovery>[2];
 	const { loadConfig } = await import("../src/config.ts");
 	await assert.rejects(
-		() => applyDiscovery({} as never, loadConfig(), poisoned),
+		() =>
+			applyDiscovery({} as never, loadConfig(), poisoned, {
+				profile: "prod",
+				profileIds: ["prod", "test"],
+				paths: profilePaths("prod"),
+			}),
 		/Invalid gateway route/,
 		"the host rejects the unroutable entry before any provider registration",
+	);
+	assert.equal(
+		existsSync(profilePaths("prod").discoveryCachePath),
+		false,
+		"a rejected discovery must invalidate the profile's own cache",
 	);
 	assert.equal(existsSync(rejectedPath), false, "a rejected discovery must invalidate the cache");
 

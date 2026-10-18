@@ -26,6 +26,7 @@ try {
 		JSON.stringify({
 			proxy: { endpoint: "https://proxy.test/v1", apiKey: "test-key" },
 			registerAll: true,
+			discoveryExcludes: ["ds/*"],
 		}),
 	);
 	writeFileSync(
@@ -94,9 +95,20 @@ try {
 						suggestedProvider: "ChatGPT Web",
 						ownedBy: "ChatGPT Web",
 					},
+					{
+						id: "ds/glm-5.2",
+						name: "GLM 5.2 (ds alias)",
+						reasoning: true,
+						contextWindow: 1_000_000,
+						maxTokens: 131_072,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						api: "openai-completions",
+						suggestedProvider: "ds",
+						ownedBy: "ds",
+					},
 				],
 				serverDiscoveryExcludes: [],
-				upstreamTotal: 5,
+				upstreamTotal: 6,
 			},
 		}),
 	);
@@ -118,14 +130,27 @@ try {
 			registered.push({ name, modelCount: config.models?.length ?? 0 });
 		},
 		registerCommand() {},
+		registerFlag() {},
+		getFlag() {
+			return undefined;
+		},
 		on() {},
 	} as unknown as Parameters<typeof aiGateway>[0]);
 
 	const byName = Object.fromEntries(registered.map((r) => [r.name, r]));
-	assert.deepEqual(Object.keys(byName).sort(), ["chatgpt-web", "openai", "opencode"]);
-	assert.equal(byName.openai?.modelCount, 2);
-	assert.equal(byName.opencode?.modelCount, 1);
-	assert.equal(byName["chatgpt-web"]?.modelCount, 2);
+	assert.deepEqual(Object.keys(byName).sort(), [
+		"agp-prod-chatgpt-web",
+		"agp-prod-openai",
+		"agp-prod-opencode",
+	]);
+	assert.equal(byName["agp-prod-openai"]?.modelCount, 2);
+	assert.equal(byName["agp-prod-opencode"]?.modelCount, 1);
+	assert.equal(byName["agp-prod-chatgpt-web"]?.modelCount, 2);
+	assert.equal(
+		byName["agp-prod-ds"],
+		undefined,
+		"discoveryExcludes must drop exactly the ds alias group",
+	);
 	assert.equal(fetches, 0);
 } finally {
 	globalThis.fetch = originalFetch;

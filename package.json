@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.10",
+	"version": "0.4.3-agp.11",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -11,7 +11,10 @@
 	"files": [
 		"index.ts",
 		"src",
-		"README.md"
+		"README.md",
+		"scripts/omp-prod",
+		"scripts/omp-test",
+		"scripts/omp-profile-launch.sh"
 	],
 	"pi": {
 		"extensions": [
@@ -33,7 +36,16 @@
 		"check:child": "bun scripts/run-isolated.ts tests/headless-child.ts",
 		"check:register-all": "bun scripts/run-isolated.ts tests/register-all.ts",
 		"check:discovery-cache": "bun scripts/run-isolated.ts tests/discovery-cache-recovery.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all"
+		"check:profile-layout": "bun scripts/run-isolated.ts tests/profile-layout.ts",
+		"check:profile-namespace": "bun scripts/run-isolated.ts tests/profile-namespace.ts",
+		"check:profile-binding": "bun scripts/run-isolated.ts tests/profile-binding.ts",
+		"check:profile-isolation": "bun scripts/run-isolated.ts tests/profile-isolation.ts",
+		"check:child-inheritance": "bun scripts/run-isolated.ts tests/child-inheritance.ts",
+		"check:api-family-override": "bun scripts/run-isolated.ts tests/api-family-override.ts",
+		"check:runtime-separation": "bun scripts/run-isolated.ts tests/runtime-separation.ts",
+		"check:legacy-resume": "bun scripts/run-isolated.ts tests/legacy-resume.ts",
+		"check:fail-closed": "bun scripts/run-isolated.ts tests/fail-closed.ts",
+		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all && npm run check:profile-layout && npm run check:profile-namespace && npm run check:profile-binding && npm run check:profile-isolation && npm run check:child-inheritance && npm run check:api-family-override && npm run check:runtime-separation && npm run check:legacy-resume && npm run check:fail-closed"
 	},
 	"dependencies": {
 		"@oh-my-pi/pi-catalog": "18.2.0"
