@@ -27,16 +27,17 @@ was launched with a different `AGP_PROFILE`. That is intentional: history never
 moves silently. Resume may restore the model recorded by the session when it
 still names an older AGP namespace that the selected environment serves.
 
-All gateway providers are explicitly namespaced: `agp-prod-codex`,
-`agp-test-codex`, `agp-test-opencode`, and so on. Their local model IDs remain
-unchanged. `agp-test-codex/gpt-6-astra` still sends the exact server wire ID:
-`codex/gpt-6-astra`, not the display prefix. Direct and local providers are not
-renamed, removed or used as automatic fallbacks by this extension.
+Gateway providers keep the server's own plain names: `codex`, `opencode`,
+`deepseek`, built-in names, and local groups. Their model IDs are unchanged, so
+`codex/gpt-6-astra` is both the local selector and the exact server wire ID.
+Direct providers keep their historical names (`cpa-codex`, `ds-local`) and are
+not renamed, removed or used as automatic fallbacks by this extension.
 
-Sessions recorded before the direct-provider cleanup (`cpa-codex`,
-`ds-local`) are re-selected onto `direct-cpa-codex` / `direct-deepseek` when the
-current host resolves that exact model. They are never moved onto an AGP
-environment and an unresolvable selector is left untouched.
+One process serves one environment: a new conversation uses the registry default
+(`test`) or `AGP_PROFILE`, and a resumed conversation uses the environment saved
+in its own session file. Switching inside a session re-registers the same plain
+provider names against the target environment, so the model menu never shows
+both environments at once.
 
 `/cliproxy-profile` reports the current environment and origin.
 `/cliproxy-profile test` or `prod` asks to start a **new conversation** on that
@@ -168,12 +169,12 @@ Gateway credentials remain private to the guarded final HTTP fetch; they are
 never registered as provider-wide host API keys.
 
 The extension uses OMP's supported `fetchDynamicModels` registration to own
-its environment-prefixed namespaces. Static registration alone does not
+its provider namespaces. Static registration alone does not
 suppress built-in discovery on stock OMP. Keep the gateway's wire identity
 separate from the local provider label; do not recreate nested selectors such
 as `deepseek/opencode/...` through unrelated builtin providers.
 
-For example, choose `agp-test-opencode/deepseek-v4.1-flash`. The exact upstream
+For example, choose `opencode/deepseek-v4.1-flash`. The exact upstream
 wire ID remains `opencode/deepseek-v4.1-flash`. Both `x-session-id` and
 `x-opencode-session` derive from the actual conversation ID. Explicit request
 headers take precedence over model headers, and explicit model headers take
@@ -282,15 +283,15 @@ to `true` to register **every** provider and model the gateway serves on each
 refresh:
 
 - every built-in provider with its discovered models, and
-- every connector-backed custom-pool group under
-  `agp-<profile>-<server namespace>` (`agp-test-codex`, for example).
+- every connector-backed custom-pool group under its server namespace
+  (`codex`, `opencode`, for example).
   Legacy display-only group names are slugified inside that environment.
 
 New models appear without a config edit. Matching explicit model settings are
 preserved, as are unrelated custom provider definitions. The Models tab remains
-read-only in this mode. `providerPrefix` affects only legacy discovery inside
-the environment prefix; it cannot replace the mandatory `agp-prod-`/`agp-test-`
-identity. Role mapping is session-local; unrelated direct/local roles are kept.
+read-only in this mode. `providerPrefix` affects only legacy discovery; plain
+server names are used. Role mapping is session-local; unrelated direct/local
+roles are kept.
 
 After a successful refresh, providers previously registered by this extension
 but absent from the current catalog/configuration are unregistered in the same
@@ -300,7 +301,7 @@ other extensions are not removed.
 ### Model identity and metadata
 
 For server route `codex/gpt-6-astra`, the test profile registers provider
-`agp-test-codex` and local model ID `gpt-6-astra`. Chat
+`codex` and local model ID `gpt-6-astra`. Chat
 Completions, Responses, and Messages requests always carry the server's exact
 `wireId`, even after an application payload hook. Session headers, cancellation,
 and non-transport stream options are preserved. A missing `x-session-id` is
