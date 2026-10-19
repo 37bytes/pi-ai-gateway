@@ -148,7 +148,7 @@ const discovery = {
 try {
 	assert.match(
 		renderQuotaSegment(usage, binding, theme, modelId)!,
-		/7d .* 37/,
+		/\ud83d\uddd3 .* 37/,
 		"other connector staleness is not selected transport staleness",
 	);
 	const orderedGroups: UsageGroup[] = [
@@ -163,11 +163,11 @@ try {
 		modelId,
 	)!;
 	assert.ok(
-		ordered.indexOf("rolling") < ordered.indexOf("weekly") &&
-			ordered.indexOf("weekly") < ordered.indexOf("monthly"),
+		ordered.indexOf("\u23f1") < ordered.indexOf("\ud83d\uddd3") &&
+			ordered.indexOf("\ud83d\uddd3") < ordered.indexOf("\ud83d\udcc5"),
 		`quota windows must render hourly, weekly, monthly regardless of server order: ${ordered}`,
 	);
-	assert.match(ordered, /rolling.*70.*weekly.*60.*monthly.*50/);
+	assert.match(ordered, /\u23f1.*70.*\ud83d\uddd3.*60.*\ud83d\udcc5.*50/);
 	const staleOtherModel: UsageGroup = {
 		...freshWindow,
 		id: "seven-day-other",
@@ -180,7 +180,7 @@ try {
 		...usage,
 		accounts: [{ ...freshAccount, status: "partial", groups: [freshWindow, staleOtherModel] }],
 	};
-	assert.match(renderQuotaSegment(mixed, binding, theme, modelId)!, /7d .* 37/);
+	assert.match(renderQuotaSegment(mixed, binding, theme, modelId)!, /\ud83d\uddd3 .* 37/);
 	assert.doesNotMatch(renderQuotaSegment(mixed, binding, theme, modelId)!, /Other|stale/);
 	assert.equal(
 		renderQuotaSegment(
@@ -242,7 +242,7 @@ try {
 			theme,
 			modelId,
 		)!,
-		/7d .* 37/,
+		/\ud83d\uddd3 .* 37/,
 		"invalid reset timestamps are not invented expiry dates",
 	);
 	const expiredDetail = renderUsage({
@@ -320,7 +320,7 @@ try {
 	const statusByKey: Record<string, string | undefined> = {};
 	const ctx: FixtureContext = {
 		hasUI: true,
-		model: { provider: "agp-prod-codex", id: modelId },
+		model: { provider: "codex", id: modelId },
 		ui: {
 			theme,
 			notify() {},
@@ -338,7 +338,7 @@ try {
 		return status;
 	};
 
-	assert.match((await emit("before_agent_start"))!, /7d .* 37/);
+	assert.match((await emit("before_agent_start"))!, /\ud83d\uddd3 .* 37/);
 	assert.equal(usageReads, 1);
 	now += USAGE_CACHE_TTL_MS; // Exact TTL boundary, not a wall-clock sleep.
 	failUsage = true;
@@ -372,36 +372,36 @@ try {
 	failUsage = false;
 	assert.match(
 		(await emit("before_agent_start"))!,
-		/7d .* 37/,
+		/\ud83d\uddd3 .* 37/,
 		"successful refresh clears local staleness despite aggregate stale hint",
 	);
 	const freshReads = usageReads;
-	assert.match((await emit("before_agent_start"))!, /7d .* 37/);
+	assert.match((await emit("before_agent_start"))!, /\ud83d\uddd3 .* 37/);
 	assert.equal(usageReads, freshReads, "same authority may reuse a fresh shared cache");
 
 	// A real model switch must refresh an aged window instead of leaving the
 	// footer on the previous cache, and must reuse a window refreshed moments ago.
 	const switchReads = usageReads;
-	assert.match((await emit("session_start"))!, /7d .* 37/);
+	assert.match((await emit("session_start"))!, /\ud83d\uddd3 .* 37/);
 	assert.match(
 		statusByKey[PROFILE_STATUS_KEY]!,
-		/\u25cf PROD/,
-		"the profile segment is a colored contour indicator, not a URL",
+		/\u25cf$/,
+		"the profile segment is a colored contour indicator, not a URL or label",
 	);
 	now += USAGE_CACHE_TTL_MS;
-	ctx.model = { provider: "agp-prod-deepseek", id: switchModelId };
+	ctx.model = { provider: "deepseek", id: switchModelId };
 	await delay(900);
 	assert.equal(usageReads, switchReads + 1, "a model switch refreshes an aged shared cache once");
-	assert.match(status!, /7d .* 61/, "the switched model shows its own connector window");
+	assert.match(status!, /\ud83d\uddd3 .* 61/, "the switched model shows its own connector window");
 	assert.doesNotMatch(status!, /stale/);
-	ctx.model = { provider: "agp-prod-codex", id: modelId };
+	ctx.model = { provider: "codex", id: modelId };
 	await delay(900);
 	assert.equal(
 		usageReads,
 		switchReads + 1,
 		"a switch inside the refreshed window must not refetch",
 	);
-	assert.match(status!, /7d .* 37/);
+	assert.match(status!, /\ud83d\uddd3 .* 37/);
 	await emit("session_shutdown");
 
 	failUsage = true;
@@ -434,7 +434,7 @@ try {
 	);
 	writeFileSync(configPath, JSON.stringify(cfg));
 	const beforeRestoredAuthority = usageReads;
-	assert.match((await emit("before_agent_start"))!, /7d .* 37/);
+	assert.match((await emit("before_agent_start"))!, /\ud83d\uddd3 .* 37/);
 	assert.equal(usageReads, beforeRestoredAuthority);
 
 	// The fixture config carries no usageKey, so the plugin's resolved usage key

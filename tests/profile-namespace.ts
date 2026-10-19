@@ -21,8 +21,8 @@ assert.ok(home && process.env.HOME === home, "Run through scripts/run-isolated.t
 const originalFetch = globalThis.fetch;
 
 // --- 1. Provider-name helpers ------------------------------------------------
-assert.equal(agpProviderName("prod", "codex"), "agp-prod-codex");
-assert.equal(agpProviderName("test", "Open Code"), "agp-test-open-code");
+assert.equal(agpProviderName("prod", "codex"), "codex");
+assert.equal(agpProviderName("test", "Open Code"), "open-code");
 assert.equal(agpBaseName("agp-test-opencode", ["prod", "test"]), "opencode");
 assert.equal(agpBaseName("deepseek", ["prod", "test"]), "deepseek");
 assert.equal(agpProfileOf("agp-prod-x", ["prod", "test"]), "prod");
@@ -160,25 +160,25 @@ const cfg: ProxyConfig = {
 
 // --- 2. registrationConfig ---------------------------------------------------
 const prod = registrationConfig(cfg, discovery, "prod");
-assert.deepEqual(Object.keys(prod.builtinProviders), ["agp-prod-openai"]);
+assert.deepEqual(Object.keys(prod.builtinProviders), ["openai"]);
 assert.deepEqual(Object.keys(prod.customProviders).sort(), [
-	"agp-prod-codex",
-	"agp-prod-deepseek",
-	"agp-prod-local-glm",
+	"codex",
+	"deepseek",
+	"local-glm",
 ]);
 for (const key of Object.keys(prod.customProviders)) {
 	assert.ok(!key.includes("ds"), `the ds alias group must not produce a provider: ${key}`);
 }
 assert.deepEqual(
-	prod.customProviders["agp-prod-codex"]!.models.map((model) => model.id).sort(),
+	prod.customProviders["codex"]!.models.map((model) => model.id).sort(),
 	["codex/gpt-6-astra", "codex/gpt-6-vega"],
 );
 assert.deepEqual(
-	prod.customProviders["agp-prod-deepseek"]!.models.map((model) => model.id).sort(),
+	prod.customProviders["deepseek"]!.models.map((model) => model.id).sort(),
 	["deepseek/deepseek-v4", "deepseek/deepseek-v4-flash"],
 );
-assert.deepEqual(prod.customProviders["agp-prod-local-glm"]!.models.map((m) => m.id), ["local-glm"]);
-assert.deepEqual(prod.builtinProviders["agp-prod-openai"]!.models, ["gpt-6-astra"]);
+assert.deepEqual(prod.customProviders["local-glm"]!.models.map((m) => m.id), ["local-glm"]);
+assert.deepEqual(prod.builtinProviders["openai"]!.models, ["gpt-6-astra"]);
 // Wire ids are never rewritten: every model id is exactly the fixture's.
 for (const provider of Object.values(prod.customProviders)) {
 	for (const model of provider.models) assert.ok(fixtureIds.has(model.id), model.id);
@@ -191,20 +191,20 @@ assert.equal(prod.overrides, cfg.overrides, "the overrides block must be carried
 // id drops nothing.
 const wide = registrationConfig({ ...cfg, discoveryExcludes: ["*:*"] }, discovery, "prod");
 assert.deepEqual(Object.keys(wide.customProviders).sort(), [
-	"agp-prod-codex",
-	"agp-prod-deepseek",
-	"agp-prod-ds",
-	"agp-prod-local-glm",
+	"codex",
+	"deepseek",
+	"ds",
+	"local-glm",
 ]);
-assert.equal(wide.customProviders["agp-prod-ds"]!.models.length, 2);
+assert.equal(wide.customProviders["ds"]!.models.length, 2);
 
 // Same fixture under the test prefix.
 const test = registrationConfig(cfg, discovery, "test");
-assert.deepEqual(Object.keys(test.builtinProviders), ["agp-test-openai"]);
+assert.deepEqual(Object.keys(test.builtinProviders), ["openai"]);
 assert.deepEqual(Object.keys(test.customProviders).sort(), [
-	"agp-test-codex",
-	"agp-test-deepseek",
-	"agp-test-local-glm",
+	"codex",
+	"deepseek",
+	"local-glm",
 ]);
 
 // The input config is never mutated.
@@ -217,7 +217,7 @@ const cfgPrivate: ProxyConfig = {
 	customProviders: { "local-private": { api: "openai-completions", models: [{ id: "local-glm" }] } },
 };
 const privateNamespaced = registrationConfig(cfgPrivate, discovery, "prod");
-assert.ok(privateNamespaced.customProviders["agp-prod-local-private"]);
+assert.ok(privateNamespaced.customProviders["local-private"]);
 
 // --- 3. buildProfileCatalog --------------------------------------------------
 const catalog = buildProfileCatalog(cfg, discovery, "prod", ["prod", "test"]);
@@ -243,33 +243,33 @@ try {
 	} as unknown as ExtensionAPI;
 	const report = await applyAll(pi, cfg, discovery, { profile: "prod", profileIds: ["prod", "test"] });
 	const expectedNames = [
-		"agp-prod-codex",
-		"agp-prod-deepseek",
-		"agp-prod-local-glm",
-		"agp-prod-openai",
+		"codex",
+		"deepseek",
+		"local-glm",
+		"openai",
 	];
 	assert.deepEqual(report.registered.map((entry) => entry.provider).sort(), expectedNames);
 	assert.deepEqual([...registered.keys()].sort(), expectedNames);
 
-	const codexProvider = registered.get("agp-prod-codex")!;
+	const codexProvider = registered.get("codex")!;
 	assert.deepEqual(
 		codexProvider.models!.map((model) => model.id).sort(),
 		["gpt-6-astra", "gpt-6-vega"],
 	);
 	const selected = {
 		...codexProvider.models![0]!,
-		provider: "agp-prod-codex",
+		provider: "codex",
 		api: codexProvider.api!,
 		baseUrl: codexProvider.baseUrl!,
 		compat: undefined,
 	};
 	const context = { messages: [{ role: "user" as const, content: "fixture request", timestamp: 0 }] };
 	// Identity guard: only a model that names this exact registered provider and
-	// transport may dispatch, so the other environment can never serve this route.
+	// transport may dispatch, so another connector can never serve this route.
 	assert.throws(
 		() =>
 			codexProvider.streamSimple!(
-				{ ...selected, provider: "agp-test-codex" },
+				{ ...selected, provider: "deepseek" },
 				context,
 				{ apiKey: "fixture-key" },
 			),

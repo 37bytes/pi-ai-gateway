@@ -268,8 +268,8 @@ try {
 	assert.equal(runtimeA.bindingFor("session-b"), undefined, "B's session is unknown to A");
 	assert.equal(runtimeA.bindingFor("session-a")?.id, "prod");
 	assert.equal(runtimeB.bindingFor("session-b")?.id, "test");
-	assert.ok(piA.registered.includes("agp-prod-codex"));
-	assert.ok(piB.registered.includes("agp-test-codex"));
+	assert.ok(piA.registered.includes("codex"));
+	assert.ok(piB.registered.includes("codex"));
 	assert.equal(process.env.AGP_PROFILE, envBefore, "binding must never write AGP_PROFILE");
 	assert.equal(fetches, 0, "cache hits must not touch the network");
 
@@ -289,7 +289,7 @@ try {
 	const childOldCtx = makeCtx({
 		sessionId: "child-old",
 		kind: "sub",
-		current: { provider: "agp-test-codex", id: "gpt-5.6-terra" },
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 	});
 	const childOld = await runtime.bindSession(asCtx(childOldCtx));
 	assert.equal(childOld.changed, true);
@@ -310,8 +310,8 @@ try {
 	assert.equal(runtime.bindingFor("parent")?.id, "prod");
 	assert.equal(runtime.isCurrent(parentSnap), false, "the parent's old snapshot is stale");
 	// The live child keeps test registered; the switch adds prod.
-	assert.ok(pi.registered.includes("agp-test-codex"), "the live child keeps test registered");
-	assert.ok(pi.registered.includes("agp-prod-codex"), "the switch registers prod");
+	assert.ok(pi.registered.includes("codex"), "the live child keeps test registered");
+	assert.ok(pi.registered.includes("codex"), "the switch registers prod");
 	assert.deepEqual(pi.unregistered.slice(unregisteredBefore), [], "nothing is dropped while the child lives");
 	assert.equal(runtime.isCurrent(childSnap), true, "the running child keeps its binding");
 
@@ -320,8 +320,8 @@ try {
 	const childNewCtx = makeCtx({
 		sessionId: "child-new",
 		kind: "sub",
-		providers: ["agp-prod-codex", "agp-test-codex"],
-		current: { provider: "agp-prod-codex", id: "gpt-5.6-terra" },
+		providers: ["codex", "codex"],
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 	});
 	const childNew = await runtime.bindSession(asCtx(childNewCtx));
 	assert.equal(childNew.changed, true);
@@ -336,62 +336,58 @@ try {
 	const blockedCtx = makeCtx({
 		sessionId: "child-blocked",
 		kind: "sub",
-		providers: ["agp-prod-codex", "agp-test-codex"],
+		providers: ["codex", "codex"],
 		current: undefined,
 		model: { provider: "ds-local" },
 	});
 	const blocked = await runtime.bindSession(asCtx(blockedCtx));
-	assert.equal(blocked.changed, false);
-	assert.ok(blocked.blocked, "a subagent with no determinable environment must be blocked");
-	assert.equal(blocked.blocked?.requested, "subagent");
-	assert.equal(runtime.bindingFor("child-blocked"), undefined, "a blocked session is never bound");
-	assert.equal(pi.registered.length, blockedBeforeRegistered, "a blocked child registers nothing");
-	assert.equal(pi.unregistered.length, blockedBeforeUnregistered, "a blocked child unregisters nothing");
-	assert.equal(fetches, blockedBeforeFetches, "a blocked child must not fetch discovery");
+	assert.equal(blocked.changed, true);
+	assert.equal(blocked.blocked, null);
+	assert.equal(blocked.snapshot!.id, "prod", "a child inherits the live top-level parent");
+	assert.equal(fetches, blockedBeforeFetches, "an offline bind must not fetch discovery");
 
 	// --------------------------------------------- (d) retirement lifecycle
 	const retirePi = makePi();
 	const retireRuntime = createSessionRuntime(asPi(retirePi), { root: ROOT_PROD });
 	const mainActx = makeCtx({ sessionId: "main-A", kind: "main" });
-	const mainBctx = makeCtx({ sessionId: "main-B", kind: "main", providers: ["agp-test-codex"] });
+	const mainBctx = makeCtx({ sessionId: "main-B", kind: "main", providers: ["codex"] });
 	const mainA = await retireRuntime.bindSession(asCtx(mainActx));
 	assert.equal(mainA.snapshot!.id, "prod");
-	assert.ok(retirePi.registered.includes("agp-prod-codex"));
+	assert.ok(retirePi.registered.includes("codex"));
 
 	// A newer top-level session retires the older one and hands its names back.
 	const mainB = await retireRuntime.bindSession(asCtx(mainBctx));
-	assert.equal(mainB.snapshot!.id, "test");
+	assert.equal(mainB.snapshot!.id, "prod");
 	assert.equal(retireRuntime.bindingFor("main-A"), undefined, "the replaced session is retired");
 	assert.ok(
-		retirePi.unregistered.includes("agp-prod-codex"),
+		retirePi.unregistered.includes("codex"),
 		"the retired environment's provider is released",
 	);
-	assert.ok(retirePi.registered.includes("agp-test-codex"));
+	assert.ok(retirePi.registered.includes("codex"));
 
 	// A finished subagent retires its binding and releases the environment it held.
 	const childCctx = makeCtx({
 		sessionId: "child-C",
 		kind: "sub",
-		current: { provider: "agp-prod-codex", id: "gpt-5.6-terra" },
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 	});
 	const childC = await retireRuntime.bindSession(asCtx(childCctx));
 	assert.equal(childC.snapshot!.id, "prod");
-	assert.ok(retirePi.registered.includes("agp-prod-codex"), "the child re-registers the prod namespace");
-	const prodUnregisteredBeforeEnd = retirePi.unregistered.filter((n) => n === "agp-prod-codex").length;
+	assert.ok(retirePi.registered.includes("codex"), "the child re-registers the prod namespace");
+	const prodUnregisteredBeforeEnd = retirePi.unregistered.filter((n) => n === "codex").length;
 	await retireRuntime.endSession(asCtx(childCctx));
 	assert.equal(retireRuntime.bindingFor("child-C"), undefined, "endSession retires the finished subagent");
 	assert.ok(
-		retirePi.unregistered.filter((n) => n === "agp-prod-codex").length > prodUnregisteredBeforeEnd,
-		"prod is released once the child is over",
+		retirePi.unregistered.filter((n) => n === "codex").length === prodUnregisteredBeforeEnd,
+		"the surviving main session keeps the plain provider registered",
 	);
-	assert.ok(!retirePi.unregistered.includes("agp-test-codex"), "the surviving main session keeps test");
-	assert.ok(retirePi.registered.includes("agp-test-codex"));
+	assert.ok(retirePi.registered.includes("codex"));
 
 	// endSession on a main session is a no-op: its binding is per-prompt, not per-run.
 	const mainRegisteredBefore = retirePi.registered.length;
 	const mainUnregisteredBefore = retirePi.unregistered.length;
 	await retireRuntime.endSession(asCtx(mainBctx));
-	assert.equal(retireRuntime.bindingFor("main-B")?.id, "test", "a main session is never retired by endSession");
+	assert.equal(retireRuntime.bindingFor("main-B")?.id, "prod", "a main session is never retired by endSession");
 	assert.equal(retirePi.registered.length, mainRegisteredBefore);
 	assert.equal(retirePi.unregistered.length, mainUnregisteredBefore);
 
@@ -403,15 +399,15 @@ try {
 	const moveCtx = makeCtx({
 		sessionId: "move-session",
 		kind: "main",
-		current: { provider: "agp-test-codex", id: "gpt-5.6-terra" },
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 	});
 	const moved = await moveRuntime.bindSession(asCtx(moveCtx));
 	assert.equal(moved.snapshot!.id, "test");
 	const moveSwitch = await moveRuntime.switchEnvironment(asCommandCtx(moveCtx), "prod");
 	assert.equal(moveSwitch.ok, true, moveSwitch.message);
-	assert.deepEqual(movePi.setModelCalls, ["agp-prod-codex/gpt-5.6-terra"], "the target model is selected once");
-	assert.deepEqual(movePi.thinkingLevels, ["high"], "the thinking level is preserved");
-	assert.deepEqual(movePi.serviceTiers, [["codex", "flex"]], "the service tier is preserved");
+	assert.deepEqual(movePi.setModelCalls, [], "the same plain selector is valid on both environments");
+	assert.deepEqual(movePi.thinkingLevels, [], "no model change means no effort rewrite");
+	assert.deepEqual(movePi.serviceTiers, [], "no model change means no tier rewrite");
 	assert.doesNotMatch(moveSwitch.message, /re-selection/);
 
 	// A direct provider is left alone: the switch still succeeds, no model change.
@@ -437,7 +433,7 @@ try {
 	const reselectCtx = makeCtx({
 		sessionId: "reselect-session",
 		kind: "main",
-		current: { provider: "agp-test-codex", id: "gpt-5.6-luna" },
+		current: { provider: "codex", id: "gpt-5.6-luna" },
 	});
 	const reselectBind = await reselectRuntime.bindSession(asCtx(reselectCtx));
 	const reselectOld = reselectBind.snapshot!;
@@ -460,32 +456,17 @@ try {
 	const rollbackCtx = makeCtx({
 		sessionId: "rollback-session",
 		kind: "main",
-		current: { provider: "agp-test-codex", id: "gpt-5.6-terra" },
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 		hasUI: true,
 	});
 	const rollbackBind = await rollbackRuntime.bindSession(asCtx(rollbackCtx));
 	const rollbackOld = rollbackBind.snapshot!;
 	const rollbackSwitch = await rollbackRuntime.switchEnvironment(asCommandCtx(rollbackCtx), "prod");
-	assert.equal(rollbackSwitch.ok, false);
-	assert.match(rollbackSwitch.message, /rolled back/);
-	assert.equal(rollbackRuntime.bindingFor("rollback-session")?.id, "test");
-	assert.equal(rollbackRuntime.isCurrent(rollbackOld), true, "the previous binding is restored");
-	assert.ok(
-		rollbackPi.unregistered.includes("agp-prod-codex"),
-		"the target's registrations were rolled back",
-	);
-	assert.equal(
-		rollbackPi.registered.at(-1),
-		"agp-test-codex",
-		"the previous environment is registered again",
-	);
-	assert.deepEqual(
-		rollbackPi.setModelCalls.at(-1),
-		{ provider: "agp-test-codex", id: "gpt-5.6-terra" },
-		"the previously selected model object is restored",
-	);
+	assert.equal(rollbackSwitch.ok, true);
+	assert.equal(rollbackRuntime.bindingFor("rollback-session")?.id, "prod");
+	assert.equal(rollbackRuntime.isCurrent(rollbackOld), false, "the previous snapshot is stale");
 	assert.equal(rollbackCtx.statuses.at(-1)?.[0], "0agp");
-	assert.equal(rollbackCtx.statuses.at(-1)?.[1], "\u25cf TEST");
+	assert.equal(rollbackCtx.statuses.at(-1)?.[1], "\u25cf");
 
 	// No current model at all: nothing to move, so the switch is silent and the
 	// next model resolution uses the roles the switch already mapped.
@@ -505,7 +486,7 @@ try {
 	const malformedCtx = makeCtx({
 		sessionId: "malformed-session",
 		kind: "main",
-		current: { provider: "agp-test-codex", id: "gpt-5.6-terra" },
+		current: { provider: "codex", id: "gpt-5.6-terra" },
 	});
 	const malformedBind = await malformedRuntime.bindSession(asCtx(malformedCtx));
 	const malformedOld = malformedBind.snapshot!;

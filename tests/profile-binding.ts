@@ -223,7 +223,7 @@ try {
 	assert.equal(sessionHasHistory([{ type: "message" }]), true);
 	assert.equal(sessionHasHistory([{ type: "custom" }]), false);
 
-	// The environment a session's inherited registry already serves.
+	// Legacy prefixed names still identify their environment; plain names do not.
 	assert.equal(profileFromRegisteredNames(["agp-prod-codex"], ["prod", "test"]), "prod");
 	assert.equal(profileFromRegisteredNames(["agp-test-openai", "other"], ["prod", "test"]), "test");
 	assert.equal(profileFromRegisteredNames(["codex"], ["prod", "test"]), null);
@@ -287,11 +287,11 @@ try {
 	const inheritedRuntime = createSessionRuntime(asPi(inheritedPi), { root: ROOT_TEST });
 	const envBeforeBind = process.env.AGP_PROFILE;
 	const inherited = await inheritedRuntime.bindSession(
-		asCtx(makeCtx({ sessionId: "inherited-1", providers: ["agp-prod-codex"] })),
+		asCtx(makeCtx({ sessionId: "inherited-1", providers: ["codex"] })),
 	);
 	assert.equal(inherited.changed, true);
-	assert.equal(inherited.snapshot.id, "prod");
-	assert.equal(inherited.snapshot.source, "inherited");
+	assert.equal(inherited.snapshot.id, "test", "plain provider names identify no environment");
+	assert.equal(inherited.snapshot.source, "launch-flag");
 	assert.equal(process.env.AGP_PROFILE, envBeforeBind, "bindSession must never write AGP_PROFILE");
 
 	const piA = makePi();
@@ -316,7 +316,7 @@ try {
 	const ctx = makeCtx({ sessionId: "s1" });
 	const bound = await gateRuntime.bindSession(asCtx(ctx));
 	assert.equal(bound.snapshot.id, "prod");
-	assert.ok(gatePi.registered.includes("agp-prod-codex"));
+	assert.ok(gatePi.registered.includes("codex"));
 	const stale = gateRuntime.snapshotFor(asCtx(ctx));
 	assert.equal(stale.discoveryScope, prodScope);
 
@@ -331,12 +331,8 @@ try {
 	assert.equal(now.discoveryScope, testScope);
 	assert.equal(gateRuntime.isCurrent(now), true);
 	const registeredDuringSwitch = gatePi.registered.slice(registeredBefore);
-	assert.ok(registeredDuringSwitch.length > 0, "the switch must register the new environment");
-	for (const name of registeredDuringSwitch) assert.match(name, /^agp-test-/);
-	assert.ok(
-		gatePi.unregistered.includes("agp-prod-codex"),
-		"with no other live session, the old environment's provider is released",
-	);
+	assert.ok(registeredDuringSwitch.includes("codex"), "the switch must register the same plain namespace");
+	assert.ok(gatePi.registered.includes("codex"), "the target environment keeps the plain provider names");
 
 	// --------------------------------------------- 4. role mapping + overlay
 	const catalogCfg = makeCfg(TEST_ENDPOINT);
@@ -358,22 +354,14 @@ try {
 		vision: "ds-local/deepseek-v4-pro",
 	};
 	const remap = remapRoles(roles, ["prod", "test"], catalog);
-	assert.deepEqual(remap.mapped, {
-		slow: "agp-test-codex/gpt-5.6-terra",
-		task: "agp-test-opencode/deepseek-v4.1-flash",
-	});
+	assert.deepEqual(remap.mapped, {}, "plain selectors already name this environment and need no rewrite");
 	assert.ok(!("default" in remap.mapped), "direct cpa-codex role must stay untouched");
 	assert.ok(!("vision" in remap.mapped), "direct ds-local role must stay untouched");
 
 	// An effort suffix is carried through verbatim when the role does belong to
 	// this environment.
 	const withEffort = remapRoles({ ...roles, research: "codex/gpt-6-astra:max" }, ["prod", "test"], catalog);
-	assert.equal(withEffort.mapped.research, "agp-test-codex/gpt-6-astra:max");
-	assert.deepEqual(withEffort.mapped, {
-		slow: "agp-test-codex/gpt-5.6-terra",
-		task: "agp-test-opencode/deepseek-v4.1-flash",
-		research: "agp-test-codex/gpt-6-astra:max",
-	});
+	assert.deepEqual(withEffort.mapped, {}, "a plain selector is already the target selector");
 
 	// A model the environment does not serve is reported, never invented.
 	const unresolved = remapRoles({ slow: "codex/gpt-5.6-luna" }, ["prod", "test"], catalog);
@@ -382,7 +370,7 @@ try {
 
 	assert.deepEqual(
 		remapSpawnPatterns(["codex/gpt-5.6-terra", "ds-local/deepseek-v4-pro"], ["prod", "test"], catalog),
-		{ patterns: ["agp-test-codex/gpt-5.6-terra", "ds-local/deepseek-v4-pro"], changed: true },
+		{ patterns: ["codex/gpt-5.6-terra", "ds-local/deepseek-v4-pro"], changed: false },
 	);
 	assert.deepEqual(remapSpawnPatterns(["ds-local/deepseek-v4-pro"], ["prod", "test"], catalog), {
 		patterns: ["ds-local/deepseek-v4-pro"],
@@ -391,14 +379,14 @@ try {
 
 	// Overlay: valid-looking YAML with the mapped role/agent keys and no secrets.
 	const yaml = profileOverlayYaml(
-		{ slow: "agp-test-codex/gpt-5.6-terra" },
-		{ explore: "agp-test-opencode/deepseek-v4.1-flash" },
+		{ slow: "codex/gpt-5.6-terra" },
+		{ explore: "opencode/deepseek-v4.1-flash" },
 	);
 	assert.match(yaml, /^modelRoles:$/m);
-	assert.match(yaml, /^\s+"slow": "agp-test-codex\/gpt-5\.6-terra"$/m);
+	assert.match(yaml, /^\s+"slow": "codex\/gpt-5\.6-terra"$/m);
 	assert.match(yaml, /^task:$/m);
 	assert.match(yaml, /^\s+agentModelOverrides:$/m);
-	assert.match(yaml, /^\s+"explore": "agp-test-opencode\/deepseek-v4\.1-flash"$/m);
+	assert.match(yaml, /^\s+"explore": "opencode\/deepseek-v4\.1-flash"$/m);
 	assert.doesNotMatch(yaml, /apiKey|Bearer|sk-/i);
 
 	// writeProfileOverlay: 0600 at the profile's own path; empty maps are a no-op.
@@ -406,8 +394,8 @@ try {
 	assert.equal(
 		writeProfileOverlay(
 			overlayPaths,
-			{ slow: "agp-test-codex/gpt-5.6-terra" },
-			{ explore: "agp-test-opencode/deepseek-v4.1-flash" },
+			{ slow: "codex/gpt-5.6-terra" },
+			{ explore: "opencode/deepseek-v4.1-flash" },
 		),
 		true,
 	);

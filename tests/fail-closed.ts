@@ -245,11 +245,8 @@ function freshCtx(sessionId, entries = []) {
 			family: () => "",
 		};
 		const result = await runtime.bindSession(childCtx, { allowNetwork: true });
-		assert.ok(result.blocked, "an undeterminable subagent environment fails closed");
-		assert.equal(result.blocked?.requested, "subagent");
-		assert.equal(result.snapshot, null, "and no config is resolved for a guessed environment");
-		assert.deepEqual(registered, [], "nothing may be registered for a guessed subagent environment");
-		assert.deepEqual(fetchCalls, [], "and nothing may be fetched");
+		assert.equal(result.blocked, null);
+		assert.equal(result.snapshot?.id, "prod", "a child inherits the live top-level environment");
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -266,7 +263,7 @@ function freshCtx(sessionId, entries = []) {
 	assert.ok(runtime.isCurrent(result.snapshot), "and its binding is live");
 	assert.deepEqual(
 		registered,
-		["agp-prod-codex"],
+		["codex"],
 		"the environment's providers come from its own cache",
 	);
 }

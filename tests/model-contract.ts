@@ -313,10 +313,10 @@ try {
 	};
 	const effective = registrationConfig(explicit, discovery, "prod");
 	assert.deepEqual(
-		effective.customProviders["agp-prod-local-private"],
+		effective.customProviders["local-private"],
 		explicit.customProviders["local-private"],
 	);
-	assert.equal(effective.customProviders["agp-prod-codex"]?.models[0]?.name, "Operator Astra");
+	assert.equal(effective.customProviders["codex"]?.models[0]?.name, "Operator Astra");
 	assert.equal(explicit.customProviders.codex?.models[0]?.maxTokens, 64_000);
 	const retainedRegistrations = new Map<string, ProviderConfig>();
 	await applyAll(
@@ -330,16 +330,16 @@ try {
 		applyOptions,
 	);
 	assert.equal(
-		retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.name,
+		retainedRegistrations.get("retained-custom")?.models?.[0]?.name,
 		"Retained operator model",
 	);
 	assert.equal(
-		retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.contextWindow,
+		retainedRegistrations.get("retained-custom")?.models?.[0]?.contextWindow,
 		512_000,
 	);
-	assert.equal(retainedRegistrations.get("agp-prod-retained-custom")?.models?.[0]?.cost.input, 17);
-	assert.equal(retainedRegistrations.get("agp-prod-codex")?.models?.[0]?.maxTokens, 64_000);
-	assert.equal(retainedRegistrations.get("agp-prod-codex")?.models?.[0]?.cost.input, 10);
+	assert.equal(retainedRegistrations.get("retained-custom")?.models?.[0]?.cost.input, 17);
+	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.maxTokens, 64_000);
+	assert.equal(retainedRegistrations.get("codex")?.models?.[0]?.cost.input, 10);
 
 	const liveRegistry = new Map<string, ProviderConfig>([["another-extension", {}]]);
 	const liveAPI = {
@@ -357,7 +357,7 @@ try {
 		suggestedProvider: "cx",
 	};
 	await applyAll(liveAPI, explicit, { ...discovery, customPool: [model, legacyAlias] }, applyOptions);
-	assert.ok(liveRegistry.has("agp-prod-cx"), "fixture must start with an announced legacy namespace");
+	assert.ok(liveRegistry.has("cx"), "fixture must start with an announced legacy namespace");
 	await assert.rejects(
 		applyAll(
 			liveAPI,
@@ -387,18 +387,18 @@ try {
 		/Conflicting API families/,
 	);
 	assert.ok(
-		liveRegistry.has("agp-prod-cx"),
+		liveRegistry.has("cx"),
 		"failed refresh must not retire the last successful catalog",
 	);
 	await applyAll(liveAPI, explicit, discovery, applyOptions);
 	assert.equal(
-		liveRegistry.has("agp-prod-cx"),
+		liveRegistry.has("cx"),
 		false,
 		"retired namespace must disappear without restarting OMP",
 	);
-	assert.ok(liveRegistry.has("agp-prod-codex"));
+	assert.ok(liveRegistry.has("codex"));
 	assert.ok(
-		liveRegistry.has("agp-prod-retained-custom"),
+		liveRegistry.has("retained-custom"),
 		"explicit current custom group must remain",
 	);
 	assert.ok(liveRegistry.has("another-extension"), "another extension's providers must remain");
@@ -423,7 +423,7 @@ try {
 			applyOptions,
 		);
 		assert.equal(registrations.length, 1);
-		assert.equal(registrations[0]!.name, "agp-prod-codex");
+		assert.equal(registrations[0]!.name, "codex");
 		const registered = registrations[0]!.config;
 		assert.notEqual(
 			registered.apiKey,
@@ -474,7 +474,7 @@ try {
 		// Stock OMP's registered agp:* model has no native compatibility record.
 		const selected = {
 			...registered.models![0]!,
-			provider: "agp-prod-codex",
+			provider: "codex",
 			api: registered.api!,
 			baseUrl: registered.baseUrl!,
 			compat: undefined,
@@ -597,7 +597,7 @@ try {
 		providerKind: "codex",
 		modelIds: [model.id, model.canonicalModel!],
 	};
-	assert.match(renderQuotaSegment(document, binding, theme, model.selectorId)!, /5h .* 37/);
+	assert.match(renderQuotaSegment(document, binding, theme, model.selectorId)!, /\u23f1 .* 37/);
 	assert.equal(
 		renderQuotaSegment(document, { providerId: "different", providerKind: "codex" }, theme),
 		null,
@@ -625,8 +625,8 @@ try {
 		},
 	);
 	const scoped = renderQuotaSegment(document, binding, theme, model.selectorId)!;
-	assert.match(scoped, /7d .* 80/);
-	assert.match(scoped, /Astra .* 50/);
+	assert.match(scoped, /\ud83d\uddd3 .* 80/);
+	assert.match(scoped, /\ud83d\uddd3 .* 50/);
 	assert.doesNotMatch(scoped, /Other/);
 	allowed.groups = [{ ...allowed.groups![0]!, state: "stale", remainingFraction: 0.37 }];
 	assert.equal(renderQuotaSegment(document, binding, theme), "quota stale");
@@ -658,8 +658,8 @@ try {
 		{ id: "monthly", label: "Monthly", state: "supported", remainingFraction: 0.72 },
 	];
 	const genericQuota = renderQuotaSegment(document, binding, theme, model.selectorId)!;
-	assert.match(genericQuota, /Subscription .* 31/);
-	assert.match(genericQuota, /Monthly .* 72/);
+	assert.match(genericQuota, /\u2022 .* 31/);
+	assert.match(genericQuota, /\ud83d\udcc5 .* 72/);
 	assert.doesNotMatch(genericQuota, /5h|7d|unknown|Other|99|100/);
 
 	const scope = cacheScope(cfg.proxy.endpoint, "fixture-key", 2);

@@ -29,9 +29,9 @@ export function providerSlug(name: string): string {
 	);
 }
 
-/** The registered name for one environment's view of a server namespace. */
-export function agpProviderName(profile: string, base: string): string {
-	return `${AGP_PROVIDER_PREFIX}-${profile}-${providerSlug(base)}`;
+/** The registered name for a server namespace. */
+export function agpProviderName(_profile: string, base: string): string {
+	return providerSlug(base);
 }
 
 /**

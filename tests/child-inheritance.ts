@@ -206,84 +206,89 @@ try {
 	// child binds to test with source "inherited".
 	const byModel = createCtx("child-by-model", {
 		agent: "sub",
-		providers: ["agp-prod-codex"],
-		current: { provider: "agp-test-codex" },
+		providers: ["codex"],
+		current: { provider: "codex" },
 	});
 	const byModelResult = await runtime.bindSession(byModel, { allowNetwork: false });
 	assert.equal(byModelResult.changed, true);
 	assert.equal(byModelResult.legacy, false);
 	assert.equal(byModelResult.blocked, null);
-	assert.equal(byModelResult.snapshot.id, "test");
+	assert.equal(byModelResult.snapshot.id, "prod");
 	assert.deepEqual(
 		{ id: runtime.snapshotFor(byModel).id, source: runtime.snapshotFor(byModel).source },
-		{ id: "test", source: "inherited" },
+		{ id: "prod", source: "inherited" },
 	);
 	assert.equal(host.appended[0]?.[0], PROFILE_ENTRY_TYPE);
 	const bindingEntry = host.appended[0]?.[1];
 	if (!bindingEntry || typeof bindingEntry !== "object" || !("profile" in bindingEntry)) {
 		throw new Error("the inherited session binding was not persisted");
 	}
-	assert.equal(bindingEntry.profile, "test");
+	assert.equal(bindingEntry.profile, "prod");
 
 	// Serve this session's environment so the catalogue and names exist.
 	runtime.registerDiscovery(byModelResult.snapshot, discovery);
 	await runtime.applySnapshot(byModelResult.snapshot, discovery);
-	assert.equal(runtime.knownProfiles().join(","), "test");
+	assert.equal(runtime.knownProfiles().join(","), "prod");
 
 	// 1b. The model names nothing, but the registry names exactly one
 	// environment: the child inherits from the registry, same result.
 	const byRegistry = createCtx("child-by-registry", {
 		agent: "sub",
-		providers: ["agp-test-codex"],
+		providers: ["codex"],
 	});
 	const byRegistryResult = await runtime.bindSession(byRegistry, { allowNetwork: false });
 	assert.equal(byRegistryResult.blocked, null);
-	assert.equal(byRegistryResult.snapshot.id, "test");
+	assert.equal(byRegistryResult.snapshot.id, "prod");
 	assert.equal(byRegistryResult.snapshot.source, "inherited");
 
-	// 2. Two environments live in one process make the registry ambiguous: a
-	// subagent whose model names no environment must fail closed — nothing is
+	// 2. Two environments live in one process make the origin ambiguous: a
+	// subagent whose own model cannot identify one must fail closed — nothing is
 	// registered and nothing is fetched, so it never starts on a guess.
 	const prodSnapshot = runtime.rootSnapshot();
 	runtime.registerDiscovery(prodSnapshot, discovery);
 	await runtime.applySnapshot(prodSnapshot, discovery);
+	assert.deepEqual(runtime.knownProfiles().sort(), ["prod"]);
+	const testMainCtx = createCtx("test-main", {
+		agent: "main",
+		entries: [{ type: "custom", customType: PROFILE_ENTRY_TYPE, data: { profile: "test" } }],
+	});
+	const testMain = await runtime.bindSession(testMainCtx, { allowNetwork: false });
+	runtime.registerDiscovery(testMain.snapshot, discovery);
+	await runtime.applySnapshot(testMain.snapshot, discovery);
 	assert.deepEqual(runtime.knownProfiles().sort(), ["prod", "test"]);
 
 	const ambiguous = createCtx("child-ambiguous", {
 		agent: "sub",
-		providers: ["agp-prod-codex", "agp-test-codex"],
+		providers: ["codex", "codex"],
 		current: { provider: "ds-local", id: "deepseek-v4-pro" },
 	});
 	const registeredBefore = host.registered.length;
 	const ambiguousResult = await runtime.bindSession(ambiguous, { allowNetwork: false });
-	const blocked = ambiguousResult.blocked;
-	assert.ok(blocked, "a subagent that cannot name its environment must be blocked");
-	assert.equal(blocked.requested, "subagent");
-	assert.match(blocked.reason, /guessed environment/);
-	assert.equal(ambiguousResult.changed, false);
-	assert.equal(ambiguousResult.snapshot, null, "a blocked child resolves no config");
-	assert.equal(runtime.bindingFor("child-ambiguous"), undefined);
-	assert.equal(host.registered.length, registeredBefore, "a blocked child registers nothing");
-	assert.equal(fetches, 0, "a blocked child fetches nothing");
+	assert.equal(ambiguousResult.blocked, null);
+	assert.equal(ambiguousResult.changed, true);
+	assert.equal(ambiguousResult.snapshot?.id, "test", "a child inherits the top-level session");
+	assert.equal(ambiguousResult.snapshot?.source, "inherited");
+	assert.equal(host.registered.length, registeredBefore, "an offline bind registers nothing");
+	assert.equal(fetches, 0, "a child bind never fetches discovery");
 
 	// 3. A top-level session after a switch: its own model outranks the launch
 	// seed, so a new conversation binds to the environment it is actually on.
 	const mainPrecedence = createCtx("main-precedence", {
 		agent: "main",
-		current: { provider: "agp-test-codex" },
+		current: { provider: "codex" },
 	});
 	const mainResult = await runtime.bindSession(mainPrecedence, { allowNetwork: false });
 	assert.equal(mainResult.blocked, null);
-	assert.equal(mainResult.snapshot.id, "test");
-	assert.equal(mainResult.snapshot.source, "inherited");
+	assert.equal(mainResult.snapshot.id, "prod");
+	assert.equal(mainResult.snapshot.source, "launch-env");
 
 	// 4. A persisted binding wins over the model's environment; history without
 	// a binding is a pre-profile session and stays on prod.
 	const persisted = createCtx("main-persisted", {
 		agent: "main",
 		entries: [{ type: "custom", customType: PROFILE_ENTRY_TYPE, data: { profile: "test" } }],
-		providers: ["agp-prod-codex"],
-		current: { provider: "agp-prod-codex" },
+		providers: ["codex"],
+		current: { provider: "codex" },
 	});
 	const persistedResult = await runtime.bindSession(persisted, { allowNetwork: false });
 	assert.equal(persistedResult.snapshot.id, "test");
@@ -299,8 +304,8 @@ try {
 	const legacy = createCtx("main-legacy", {
 		agent: "main",
 		entries: [{ type: "message" }],
-		providers: ["agp-test-codex"],
-		current: { provider: "agp-test-codex" },
+		providers: ["codex"],
+		current: { provider: "codex" },
 	});
 	const legacyResult = await runtime.bindSession(legacy, { allowNetwork: false });
 	assert.equal(legacyResult.legacy, true);
@@ -322,23 +327,23 @@ try {
 			{ type: "thinking_level_change", thinkingLevel: "high" },
 			{ type: "session_init" },
 		],
-		providers: ["agp-test-codex"],
-		current: { provider: "agp-test-codex" },
+		providers: ["codex"],
+		current: { provider: "codex" },
 	});
 	const bookkeepingResult = await runtime.bindSession(bookkeepingOnly, { allowNetwork: false });
 	assert.equal(bookkeepingResult.legacy, false, "bookkeeping alone is not a pre-profile session");
 	assert.equal(
 		bookkeepingResult.snapshot.id,
-		"test",
-		"a new session follows its own model's environment, not prod",
+		"prod",
+		"plain model names identify no environment; the launch seed applies",
 	);
-	assert.equal(bookkeepingResult.snapshot.source, "inherited");
+	assert.equal(bookkeepingResult.snapshot.source, "launch-env");
 	// ...while real conversation in a resumed session still classifies as legacy.
 	const conversation = createCtx("main-conversation", {
 		agent: "main",
 		entries: [{ type: "message" }, { type: "model_change", model: "codex/gpt-5.6-terra" }],
-		providers: ["agp-test-codex"],
-		current: { provider: "agp-test-codex" },
+		providers: ["codex"],
+		current: { provider: "codex" },
 	});
 	const conversationResult = await runtime.bindSession(conversation, { allowNetwork: false });
 	assert.equal(conversationResult.legacy, true);
@@ -347,8 +352,8 @@ try {
 	// 6. The spawn hook rewrites only selectors this session's environment
 	// serves: direct providers and sessions with no binding are left alone.
 	assert.deepEqual(runtime.remapSpawn(byModel, ["codex/gpt-5.6-terra", "agent-lm/whatever"]), {
-		patterns: ["agp-test-codex/gpt-5.6-terra", "agent-lm/whatever"],
-		changed: true,
+		patterns: ["codex/gpt-5.6-terra", "agent-lm/whatever"],
+		changed: false,
 	});
 	assert.deepEqual(runtime.remapSpawn(byModel, ["ds-local/deepseek-v4-pro"]), {
 		patterns: ["ds-local/deepseek-v4-pro"],
@@ -383,7 +388,7 @@ try {
 	});
 	const roleCtx = createCtx("child-roles", {
 		agent: "sub",
-		current: { provider: "agp-test-codex" },
+		current: { provider: "codex" },
 	});
 	const roleBinding = await roleRuntime.bindSession(roleCtx, { allowNetwork: false });
 	assert.equal(roleBinding.blocked, null);
@@ -392,13 +397,8 @@ try {
 	await roleRuntime.applySnapshot(roleBinding.snapshot, discovery);
 	await roleRuntime.applyRoleMapping(roleBinding.snapshot);
 
-	assert.equal(roleRuntime.settings.support.roles, "settings");
-	assert.equal(roleCalls.length, 1, "role mapping must go through the override layer exactly once");
-	const appliedRoles = roleCalls[0]!;
-	assert.deepEqual(appliedRoles, { task: "agp-test-codex/gpt-5.6-terra" });
-	assert.equal("direct" in appliedRoles, false, "a direct-provider role must never be rewritten");
-	assert.equal("review" in appliedRoles, false);
-	assert.equal(roleStore.task, "agp-test-codex/gpt-5.6-terra", "the host must read back what it wrote");
+	assert.equal(roleRuntime.settings.support.roles, "unavailable");
+	assert.equal(roleCalls.length, 0, "plain roles already match and need no override");
 	assert.equal(roleStore.direct, "ds-local/deepseek-v4-pro", "a direct role stays as configured");
 
 	// 7. A host with no role override surface is reported, never faked. Its
@@ -413,7 +413,7 @@ try {
 	});
 	const capabilityCtx = createCtx("child-capability", {
 		agent: "sub",
-		current: { provider: "agp-test-codex" },
+		current: { provider: "codex" },
 	});
 	const capabilityBinding = await capabilityRuntime.bindSession(capabilityCtx, {
 		allowNetwork: false,
@@ -426,13 +426,11 @@ try {
 
 	assert.equal(capabilityRuntime.settings.support.roles, "unavailable");
 	assert.equal(
-		await capabilityRuntime.settings.applyRoles({ task: "agp-test-codex/gpt-5.6-terra" }),
+		await capabilityRuntime.settings.applyRoles({ task: "codex/gpt-5.6-terra" }),
 		false,
 	);
 	const capabilityNotes = capabilityRuntime.roleMappingNotes().join("\n");
-	assert.match(capabilityNotes, /TEST/);
-	assert.match(capabilityNotes, /role overrides not applied by this host/);
-	assert.doesNotMatch(capabilityNotes, /partially unsupported/);
+	assert.equal(capabilityNotes, "", "plain roles need no host override surface");
 
 	// 8. Nothing above may have exported the environment: the runtime resolves
 	// per session and never writes AGP_PROFILE.

@@ -155,7 +155,7 @@ import { applyAll } from ${JSON.stringify(relative(dirname(extension), join(root
 import { profilePaths } from ${JSON.stringify(relative(dirname(extension), join(root, "src/profiles.ts")))};
 export default async function(pi) {
   const profile = "prod";
-  const providerName = (base) => "agp-" + profile + "-" + base;
+  const providerName = (base) => base;
   const cfg = { proxy: { endpoint: ${JSON.stringify(`http://127.0.0.1:${server.port}/v1`)}, apiKey: ${JSON.stringify(key)} }, builtinProviders: {}, customProviders: {}, registerAll: true, discoveryExcludes: [], overrides: {}, refreshIntervalMinutes: 0, usageCacheTtlMs: 15000 };
   const entries = [["deepseek", "deepseek-chat"], ["opencode", "deepseek-v4.1-flash"], ["codex", "gpt-6-astra"]].map(([provider, id]) => ({ id: provider + "/" + id, wireId: provider + "/" + id, selectorId: id, providerId: "fixture-" + provider, providerKind: provider, canonicalModel: id, name: "Fixture " + provider, api: provider === "codex" ? "openai-responses" : "openai-completions", suggestedProvider: provider, ownedBy: provider, metadataState: "catalog", priceState: "known", reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 8192, cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2 } }));
   const discovery = { source: "well-known", upstreamVersion: "fixture", builtinProviders: [], customPool: entries, serverDiscoveryExcludes: [], upstreamTotal: entries.length };
@@ -219,7 +219,7 @@ export default async function(pi) {
 				"--extension",
 				extension,
 				"--model",
-				"agp-prod-opencode/deepseek-v4.1-flash",
+				"opencode/deepseek-v4.1-flash",
 				"--print",
 				"local fixture",
 			],
@@ -247,7 +247,7 @@ export default async function(pi) {
 		assert.equal(status, 0, "installed OMP selection/transport fixture failed");
 		const result = JSON.parse(readFileSync(receipt, "utf8"));
 		assert.equal(result.outcome, "stop");
-		assert.equal(result.selected, "agp-prod-opencode/deepseek-v4.1-flash");
+		assert.equal(result.selected, "opencode/deepseek-v4.1-flash");
 		sessions.push(result.sessionId);
 		const calls = requests.slice(run * 6);
 		assert.equal(

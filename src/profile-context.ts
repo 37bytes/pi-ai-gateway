@@ -22,6 +22,9 @@
 // writes `process.env`: the environment variable is read, never used as state.
 
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, sep } from "node:path";
 
 import { cacheScope } from "./cache-scope.ts";
 import { type ProxyConfig, loadConfig, resolveConfigValue } from "./config.ts";
@@ -138,6 +141,82 @@ function decisionFor(requested: string, source: ProfileSeed["source"]): LaunchDe
 
 export function defaultSeed(): ProfileSeed {
 	return { id: readRegistry().defaultProfile, source: "default" };
+}
+
+/**
+ * The environment a conversation being resumed by this process was saved on.
+ *
+ * OMP restores the model before session_start, so providers must be registered
+ * for the right environment before that. An explicit `--resume/-r` path is read
+ * directly; `--continue/-c` and auto-resume use the newest top-level session in
+ * the working directory. A session with history but no profile entry predates
+ * profiles and belongs to prod. Unknown paths return null; the launch/default
+ * seed then applies.
+ */
+export function resumedProfileSeed(
+	argv: readonly string[] = process.argv,
+	cwd: string = process.cwd(),
+): ProfileSeed | null {
+	const explicit = (() => {
+		for (let i = 0; i < argv.length; i++) {
+			const arg = argv[i]!;
+			if (arg === "--resume" || arg === "-r") {
+				const value = argv[i + 1];
+				return value && !value.startsWith("-") ? value : null;
+			}
+			if (arg.startsWith("--resume=")) return arg.slice("--resume=".length) || null;
+		}
+		return null;
+	})();
+	const path = explicit ?? latestSessionFile(cwd);
+	if (!path) return null;
+	let profile: string | null = null;
+	let history = false;
+	try {
+		for (const line of readFileSync(path, "utf8").split("\n")) {
+			if (!line) continue;
+			let entry: { type?: string; customType?: string; data?: { profile?: unknown } };
+			try {
+				entry = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			if (entry.type === "custom" && entry.customType === PROFILE_ENTRY_TYPE) {
+				const value = entry.data?.profile;
+				if (typeof value === "string") profile = value;
+			}
+			if (entry.type === "message" || entry.type === "compaction" || entry.type === "branch_summary") {
+				history = true;
+			}
+		}
+	} catch {
+		return null;
+	}
+	if (profile && isValidProfileId(profile) && readRegistry().profiles[profile]) {
+		return { id: profile, source: "session" };
+	}
+	if (history) return { id: DEFAULT_PROFILE, source: "legacy" };
+	return null;
+}
+
+/** Newest top-level session OMP would auto-resume for this working directory. */
+function latestSessionFile(cwd: string): string | null {
+	const home = homedir();
+	let relative = "";
+	if (cwd === home) relative = "";
+	else if (cwd.startsWith(`${home}${sep}`)) relative = cwd.slice(home.length + 1);
+	else relative = cwd.replace(/^[/\\]+/, "");
+	const slug = `-${relative.split(/[/\\]+/).join("-")}`;
+	const dir = join(home, ".omp", "agent", "sessions", slug);
+	try {
+		const newest = readdirSync(dir, { withFileTypes: true })
+			.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+			.map((entry) => ({ path: join(dir, entry.name), mtime: statSync(join(dir, entry.name)).mtimeMs }))
+			.sort((a, b) => b.mtime - a.mtime)[0];
+		return newest?.path ?? null;
+	} catch {
+		return null;
+	}
 }
 
 /**

@@ -143,6 +143,11 @@ export function planModelMove(
 	const mapped = mapSelector(selector, profileIds, catalog);
 	if (mapped) return { kind: "move", selector: mapped.mapped };
 	const namespace = agpProfileOf(provider, profileIds);
+	// Plain provider names are this environment's registrations. A model it no
+	// longer serves cannot be kept on a foreign transport.
+	if (catalog.providers.has(provider)) {
+		return catalogHasAny(catalog, id) ? { kind: "none" } : { kind: "impossible", selector };
+	}
 	// A direct provider is not an AGP registration: leaving it alone is the
 	// documented behaviour, not a fallback.
 	if (!namespace) return { kind: "direct", provider };

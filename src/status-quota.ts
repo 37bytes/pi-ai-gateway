@@ -154,6 +154,20 @@ function quotaWindowRank(id: string, label: string): number {
 	return 3;
 }
 
+/** Compact period symbol: hour, week, month, other. */
+function quotaWindowSymbol(id: string, label: string): string {
+	switch (quotaWindowRank(id, label)) {
+		case 0:
+			return "\u23f1";
+		case 1:
+			return "\ud83d\uddd3";
+		case 2:
+			return "\ud83d\udcc5";
+		default:
+			return "\u2022";
+	}
+}
+
 /** Braille fill char for a given fraction (8 levels). */
 function brailleFor(fraction: number): string {
 	const idx = Math.min(
@@ -243,10 +257,10 @@ export function renderQuotaSegment(
 			}
 		}
 	}
-	const genericWindows: Array<{ label: string; fraction: number; rank: number }> = [];
+	const genericWindows: Array<{ id: string; label: string; fraction: number; rank: number }> = [];
 	for (const [id, label] of genericLabels) {
 		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group), now, aggregateStale);
-		if (aggregate) genericWindows.push({ label, fraction: aggregate.fraction, rank: quotaWindowRank(id, label) });
+		if (aggregate) genericWindows.push({ id, label, fraction: aggregate.fraction, rank: quotaWindowRank(id, label) });
 	}
 	// Fixed ascending period order: hourly/rolling, weekly, monthly, then
 	// server-defined periods. A provider that reports only some of them keeps
@@ -265,20 +279,17 @@ export function renderQuotaSegment(
 	}
 
 	const parts: string[] = [theme.fg("dim", GAUGE_ICON)];
-	const push = (label: string, fraction: number) => {
+	const push = (symbol: string, fraction: number) => {
 		const color = colorForFraction(fraction);
 		parts.push(
-			`${theme.fg("dim", label)} ${theme.fg(color, brailleFor(fraction))} ${theme.fg(color, String(pct(fraction)))}`,
+			`${theme.fg("dim", symbol)} ${theme.fg(color, brailleFor(fraction))} ${theme.fg(color, String(pct(fraction)))}`,
 		);
 	};
 
-	if (w5) push("5h", w5.fraction);
-	if (w7) push("7d", w7.fraction);
-	if (wModel) {
-		const group = accounts.flatMap((a) => isLiveAccount(a) ? a.groups ?? [] : []).find((g) => isUsableGroup(g, now, aggregateStale) && isSelectedModelWindow(g));
-		push(group?.label?.replace(/^7d\s+/i, "").trim() || "model", wModel.fraction);
-	}
-	for (const window of genericWindows) push(window.label, window.fraction);
+	if (w5) push("\u23f1", w5.fraction);
+	if (w7) push("\ud83d\uddd3", w7.fraction);
+	if (wModel) push("\ud83d\uddd3", wModel.fraction);
+	for (const window of genericWindows) push(quotaWindowSymbol(window.id, window.label), window.fraction);
 
 	return parts.join("  ");
 }

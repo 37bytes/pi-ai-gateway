@@ -137,8 +137,8 @@ try {
 
 	const registered = await runExtension();
 	const names = registered.map((entry) => entry.name).sort();
-	assert.deepEqual(names, ["agp-prod-codex", "agp-prod-opencode"], `expected the fresh pool to register, got ${JSON.stringify(registered)}`);
-	assert.equal(registered.find((entry) => entry.name === "agp-prod-codex")?.models, 1);
+	assert.deepEqual(names, ["codex", "opencode"], `expected the fresh pool to register, got ${JSON.stringify(registered)}`);
+	assert.equal(registered.find((entry) => entry.name === "codex")?.models, 1);
 	assert.ok(gateway.fetches() > 0, "a rejected cached discovery must trigger a network fetch");
 
 	const rewritten = JSON.parse(readFileSync(poisonedCache, "utf8")) as { discovery: { customPool: Array<{ id: string; selectorId?: string }> } };

@@ -56,6 +56,7 @@ import {
 	profileEntryData,
 	registeredProviderNames,
 	profileFromCurrentModel,
+	resumedProfileSeed,
 	profileFromRegisteredNames,
 	pickProfileForSession,
 	sessionIdOf,
@@ -76,8 +77,6 @@ import {
 export const PROFILE_STATUS_KEY = "0agp";
 /** Pseudo-session used for registration work done before any session exists. */
 export const ROOT_SESSION_KEY = "root";
-/** Pseudo-session holding cached providers of another environment until bind. */
-const PRELOAD_SESSION_PREFIX = "preload:";
 
 export interface SessionBinding {
 	id: string;
@@ -124,13 +123,6 @@ export interface SessionRuntime {
 	knownProfiles(): string[];
 	catalogFor(profile: string): ProfileCatalog | undefined;
 	registerDiscovery(snapshot: ProfileSnapshot, discovery: Discovery): void;
-	/**
-	 * Register cached providers of every configured environment before the host
-	 * restores a saved model. OMP throws on an unknown model during restore, and
-	 * a resumed session may belong to the environment that is not the process
-	 * default. Only caches are used; this never fetches.
-	 */
-	preloadProfiles(api: ExtensionAPI): Promise<void>;
 	/**
 	 * Register this environment's providers, gated on session and generation.
 	 * `api` names the owning host session's handle; omitted, it resolves from the
@@ -220,7 +212,10 @@ export function createSessionRuntime(
 		opts.launch ??
 		(opts.root !== undefined
 			? { seed: opts.root, problem: null }
-			: launchDecision((name) => runtimeApi().getFlag?.(name)));
+			: (() => {
+					const resumed = resumedProfileSeed();
+					return resumed ? { seed: resumed, problem: null } : launchDecision((name) => runtimeApi().getFlag?.(name));
+				})());
 	const rootProblem = launch.problem;
 	const root = launch.seed ?? (rootProblem ? null : defaultSeed());
 	const settings = createRoleSettingsPort(pi);
@@ -329,33 +324,6 @@ export function createSessionRuntime(
 				log.warn(`could not re-apply ${survivor.id} after a session ended:`, (err as Error).message);
 			}
 			return;
-		}
-	};
-
-	const preloadProfiles = async (api: ExtensionAPI): Promise<void> => {
-		for (const id of profileIds()) {
-			if (id === root?.id) continue;
-			const key = `${PRELOAD_SESSION_PREFIX}${id}`;
-			if (bindings.has(key)) continue;
-			const snapshot = buildSnapshot({ id, source: "launch-env" }, key, nextGeneration());
-			const cached = readDiscoveryCache(snapshot.paths, snapshot.discoveryScope);
-			if (!cached) continue;
-			bindings.set(key, { id, source: "launch-env", generation: snapshot.generation, api });
-			try {
-				registerDiscovery(snapshot, cached.discovery);
-				await applySnapshot(snapshot, cached.discovery, api);
-				log.info(`preloaded ${id} providers for session restore`);
-			} catch (err) {
-				bindings.delete(key);
-				log.warn(`could not preload ${id} providers:`, (err as Error).message);
-			}
-		}
-	};
-
-	/** Release restore-only registrations once the real session is bound. */
-	const retirePreloads = async (): Promise<void> => {
-		for (const key of [...bindings.keys()]) {
-			if (key.startsWith(PRELOAD_SESSION_PREFIX)) await retireSession(key, "session restore complete");
 		}
 	};
 
@@ -485,6 +453,20 @@ export function createSessionRuntime(
 		}
 
 		const entries = entriesOf(ctx);
+		// Plain provider names identify no environment by themselves. A child
+		// inherits the environment of the live parent binding; a main session uses
+		// its persisted entry or the resumed/launch seed.
+		const isChild = agentKindOf(ctx) === "sub";
+		const liveProfiles = new Set([...bindings.values()].map((candidate) => candidate.id));
+		const parentBinding = topLevelKey ? bindings.get(topLevelKey) : undefined;
+		const inheritedProfile = !isChild
+			? null
+			: (parentBinding?.id ??
+				(liveProfiles.size === 1
+					? [...liveProfiles][0]!
+					: liveProfiles.size === 0
+						? (root?.id ?? null)
+						: null));
 		const picked = pickProfileForSession({
 			persisted: persistedProfile(entries),
 			// A resumed session file with conversation content is the only legacy
@@ -497,7 +479,7 @@ export function createSessionRuntime(
 			// on (its spawn chose that environment). The registry is only a hint
 			// and only when a single environment is live in this process.
 			modelOrigin: profileFromCurrentModel(currentModelProvider(ctx), profileIds()),
-			registryOrigin: profileFromRegisteredNames(registeredProviderNames(ctx), profileIds()),
+			registryOrigin: inheritedProfile,
 			isChild: agentKindOf(ctx) === "sub",
 			root,
 			rootProblem,
@@ -551,7 +533,6 @@ export function createSessionRuntime(
 		// whose former AGP namespace no longer exists. Restore it on this
 		// environment through a normal model change, never by rewriting history.
 		await adoptStoredSessionModel(pi, ctx, snapshot, catalogs.get(snapshot.id), profileIds());
-		await retirePreloads();
 		return { snapshot, changed: true, legacy: binding.source === "legacy", blocked: null };
 	};
 
@@ -627,7 +608,7 @@ export function createSessionRuntime(
 		if (!ctx.hasUI) return;
 		try {
 			const color = snapshot.id === "prod" ? "error" : "success";
-			const text = `\u25cf ${snapshot.label}`;
+			const text = `\u25cf`;
 			ctx.ui.setStatus(PROFILE_STATUS_KEY, ctx.ui.theme?.fg ? ctx.ui.theme.fg(color, text) : text);
 		} catch (err) {
 			log.debug("could not set the profile status segment:", (err as Error).message);
@@ -983,7 +964,6 @@ export function createSessionRuntime(
 		knownProfiles: () => [...catalogs.keys()],
 		catalogFor: (profile) => catalogs.get(profile),
 		registerDiscovery,
-		preloadProfiles,
 		applySnapshot,
 		applyRoleMapping,
 		roleMappingNotes: () => [...notes],

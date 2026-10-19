@@ -84,7 +84,7 @@ try {
 		on() {},
 	} as unknown as Parameters<typeof aiGateway>[0]);
 
-	assert.deepEqual(providers, ["agp-prod-openai"]);
+	assert.deepEqual(providers, ["openai"]);
 	assert.deepEqual(commands, []);
 	assert.equal(fetches, 0);
 } finally {

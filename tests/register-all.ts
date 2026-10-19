@@ -139,15 +139,15 @@ try {
 
 	const byName = Object.fromEntries(registered.map((r) => [r.name, r]));
 	assert.deepEqual(Object.keys(byName).sort(), [
-		"agp-prod-chatgpt-web",
-		"agp-prod-openai",
-		"agp-prod-opencode",
+		"chatgpt-web",
+		"openai",
+		"opencode",
 	]);
-	assert.equal(byName["agp-prod-openai"]?.modelCount, 2);
-	assert.equal(byName["agp-prod-opencode"]?.modelCount, 1);
-	assert.equal(byName["agp-prod-chatgpt-web"]?.modelCount, 2);
+	assert.equal(byName["openai"]?.modelCount, 2);
+	assert.equal(byName["opencode"]?.modelCount, 1);
+	assert.equal(byName["chatgpt-web"]?.modelCount, 2);
 	assert.equal(
-		byName["agp-prod-ds"],
+		byName["ds"],
 		undefined,
 		"discoveryExcludes must drop exactly the ds alias group",
 	);

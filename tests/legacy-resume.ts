@@ -1,6 +1,6 @@
 // A session created before environment profiles stored its model under the
 // server's own namespace (`codex/gpt-5.6-terra`). Those providers are now
-// registered per environment (`agp-prod-codex`), so on resume the host cannot
+// registered per environment (`codex`), so on resume the host cannot
 // restore the stored selector and warns before falling back. This asserts the
 // migration that removes that manual step: the session is bound to its
 // environment (prod, as every pre-profile session was), the stored model is
@@ -83,7 +83,7 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 		{ type: "message", message: { role: "user", content: [{ type: "text", text: "hello" }] } },
 		{ type: "model_change", model: "codex/gpt-5.6-terra", role: "default" },
 	];
-	const resolved = { provider: "agp-prod-codex", id: "gpt-5.6-terra", api: "openai-responses" };
+	const resolved = { provider: "codex", id: "gpt-5.6-terra", api: "openai-responses" };
 	const notified = [];
 	const pi = {
 		getFlag: () => undefined,
@@ -135,7 +135,7 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 		models: {
 			list: () => [resolved],
 			current: () => undefined,
-			resolve: (spec) => (spec === "agp-prod-codex/gpt-5.6-terra" ? resolved : undefined),
+			resolve: (spec) => (spec === "codex/gpt-5.6-terra" ? resolved : undefined),
 			family: () => "codex",
 		},
 	};
@@ -147,13 +147,9 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 	assert.equal(result.legacy, true, "history with no binding is a pre-profile session");
 	assert.equal(result.snapshot.id, "prod", "pre-profile sessions belong to prod");
 	assert.equal(result.snapshot.source, "legacy");
-	assert.deepEqual(
-		setModel,
-		[resolved],
-		"the stored codex/gpt-5.6-terra model is re-selected as agp-prod-codex/gpt-5.6-terra",
-	);
-	assert.deepEqual(setThinking, ["high"], "the session's thinking level is re-asserted");
-	assert.deepEqual(setTier, [["openai", "priority"]], "the session's service tier is re-asserted");
+	assert.deepEqual(setModel, [], "the stored plain selector is served directly and needs no move");
+	assert.deepEqual(setThinking, [], "no model change means effort is untouched");
+	assert.deepEqual(setTier, [], "no model change means service tiers are untouched");
 	assert.equal(
 		appended.filter((entry) => entry.customType === PROFILE_ENTRY_TYPE).length,
 		1,
@@ -166,8 +162,8 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 		"the transcript is not rewritten",
 	);
 	assert.ok(
-		notified.some((message) => message.includes("session model moved")),
-		"the migration is stated once in the UI",
+		notified.every((message) => !message.includes("session model moved")),
+		"a natively served selector needs no migration notice",
 	);
 
 	// The binding is immutable: binding again neither re-registers nor re-selects.

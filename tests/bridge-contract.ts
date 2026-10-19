@@ -196,7 +196,7 @@ try {
 		throw new Error(`unexpected legacy usage request: ${call.path}`);
 	});
 	const legacyDoc = await fetchUsage(cfg, "legacy-key", { force: true });
-	assert.match(renderQuotaSegment(legacyDoc, { providerKind: "codex" }, quotaTheme)!, /5h .* 40/);
+	assert.match(renderQuotaSegment(legacyDoc, { providerKind: "codex" }, quotaTheme)!, /\u23f1 .* 40/);
 	assert.deepEqual(
 		calls.map((call) => call.path),
 		[

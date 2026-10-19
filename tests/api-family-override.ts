@@ -159,14 +159,14 @@ try {
 	const report = await applyAll(pi, cfg, discovery([entry()]), applyOptions);
 	assert.deepEqual(
 		report.registered.map((r) => r.provider),
-		["agp-test-codex"],
+		["codex"],
 	);
 	assert.equal(registrations.size, 1);
-	const registered = registrations.get("agp-test-codex")!;
+	const registered = registrations.get("codex")!;
 	assert.ok(registered, "the override group must register under its namespaced name");
 	assert.equal(
 		registered.api,
-		"agp:agp-test-codex:openai-responses",
+		"agp:codex:openai-responses",
 		"the operator's explicit Responses family must win over the discovered one",
 	);
 	assert.ok(
@@ -215,7 +215,7 @@ try {
 	// 3. The wire request keeps the exact route and credentials.
 	const selected = {
 		...registered.models!.find((model) => model.id === "gpt-6-astra")!,
-		provider: "agp-test-codex",
+		provider: "codex",
 		api: registered.api!,
 		baseUrl: registered.baseUrl!,
 		compat: undefined,
@@ -225,7 +225,7 @@ try {
 	};
 	assert.throws(
 		() =>
-			registered.streamSimple!({ ...selected, provider: "agp-prod-codex" }, context, {
+			registered.streamSimple!({ ...selected, provider: "deepseek" }, context, {
 				apiKey: "relay-key",
 			}),
 		/transport identity/,
