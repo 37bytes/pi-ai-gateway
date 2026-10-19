@@ -156,6 +156,64 @@ try {
 	assert.equal(lastUsageSource(), "plugin");
 	assert.equal(lastUsageContract(), 2);
 
+	// A duration reported by the plugin for an ordinary API-key session must
+	// survive parsing and decide the period; the name `primary` is not hourly.
+	const timedUsage = {
+		...usageDocument,
+		accounts: [
+			{
+				provider: "codex",
+				providerId: "provider-timed",
+				scope: "provider_subscription",
+				account: "opaque-timed",
+				authIndex: "opaque-timed",
+				label: "Subscription",
+				status: "active",
+				disabled: false,
+				unavailable: false,
+				success: 0,
+				failed: 0,
+				lastRequestAt: null,
+				supported: true,
+				groups: [
+					{
+						id: "primary",
+						label: "primary",
+						durationSeconds: 604_800,
+						state: "supported",
+						remainingFraction: 0.4,
+					},
+				],
+			},
+		],
+	};
+	calls = installFetch((call) => {
+		if (call.path === "/v0/resource/plugins/pi-bridge/capabilities") {
+			return json({
+				schemaVersion: 1,
+				plugin: "pi-bridge",
+				contract: 2,
+				latestContract: 2,
+				endpoints: { usage: "/usage" },
+			});
+		}
+		if (call.path === "/v0/resource/plugins/pi-bridge/usage") {
+			return json(timedUsage, 200, { "X-Pi-Contract": "2" });
+		}
+		throw new Error(`unexpected timed usage request: ${call.path}`);
+	});
+	const fetchedTimed = await fetchUsage(cfg, "legacy-key", { force: true });
+	assert.equal(fetchedTimed.accounts[0]?.groups?.[0]?.durationSeconds, 604_800);
+	assert.match(
+		renderQuotaSegment(
+			fetchedTimed,
+			{ providerId: "provider-timed" },
+			{ fg: (_color, text) => text },
+		)!,
+		/\ud83d\uddd3.*40/,
+		"a 604800s primary window renders as weekly, never hourly",
+	);
+
 	const legacyAccount = {
 		provider: "codex",
 		account: "opaque-account",

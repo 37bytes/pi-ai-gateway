@@ -47,8 +47,9 @@ A streaming turn must finish or be explicitly cancelled before a switch.
 Unavailable target discovery/model authority refuses the transition rather
 than silently sending the next turn to the previous server.
 
-The footer and hub show the bound environment and origin. Configuration,
-discovery/usage cache files and cross-process usage locks are per profile;
+The footer shows one compact row: a green test/red production dot followed by
+the selected provider's quota windows. The hub retains the environment and
+origin. Configuration, discovery/usage cache files and cross-process locks are per profile;
 asynchronous work is gated by the originating session and generation. Model
 roles preserve their selected model, effort and service-tier settings while
 resolving against the active profile's real catalogue. Missing models are not
@@ -60,13 +61,22 @@ package). It does not select an AGP server.
 
 ## Quota in the status line
 
-The footer shows how much of each provider window is left for the model you are
-currently using, so a limit is visible before it bites rather than after:
+The contour dot and quota windows share one footer status entry, without a
+separate environment line, URL or redundant gauge. For example, a Codex account
+with a weekly limit is shown as:
 
 ```text
-claude-sonnet-5   󰘧 5h ⣶ 69 7d ⣷ 81
-claude-fable-5    󰘧 5h ⣶ 69 7d ⣷ 81 Fable ⣾ 91
+● 🗓 ⣷ 81
 ```
+
+The optional `durationSeconds` field is the authoritative window length. A
+604800-second `primary` window is weekly; an 18000-second `secondary` window is
+short/hourly and sorts first. Primary/secondary/rolling describe slots or reset
+behavior, not durations. A reset deadline is not a window length either.
+Explicit legacy labels such as `5h`, `7d`, `weekly` and `monthly` remain usable
+only when no numeric duration was supplied. Invalid or unknown periods use
+`•`, not a guessed hour/week. Windows sort by their actual duration; different
+durations with the same slot name stay separate.
 
 Windows are read live, not guessed. Anthropic caps some models against a slice
 of the weekly pool — Fable may draw down half of it, and draws faster than other
@@ -82,8 +92,9 @@ measurements say `unknown` or `stale`; they never become zero-percent quota.
 The footer shows available provider capacity (the most headroom among eligible
 accounts), not a promise about the affinity-selected account or a personal
 entitlement. Different periods and model-specific windows are never summed.
-Monthly, subscription, and other server-defined windows retain their actual
-labels and independent percentages; they are not relabeled as 5h or 7d.
+Other server-defined windows retain their independent percentages. Their full
+labels remain in Usage; the compact footer uses period symbols, never an
+invented 5h or 7d label.
 Native quota freshness is evaluated for the selected connector and model:
 a stale observation for another provider/model does not hide fresh capacity.
 Expired client-cache fallbacks and passed valid reset timestamps are marked

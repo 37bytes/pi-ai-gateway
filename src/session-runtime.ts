@@ -72,9 +72,10 @@ import {
 	applyModelChange,
 	planModelMove,
 } from "./session-model.ts";
+import { FOOTER_STATUS_KEY, clearFooter, reportFooter } from "./status-footer.ts";
 
-/** Status-line key; sorts before the quota segment so the environment leads. */
-export const PROFILE_STATUS_KEY = "0agp";
+/** Single footer key owned by status-footer.ts; kept exported for callers. */
+export const PROFILE_STATUS_KEY = FOOTER_STATUS_KEY;
 /** Pseudo-session used for registration work done before any session exists. */
 export const ROOT_SESSION_KEY = "root";
 
@@ -297,6 +298,7 @@ export function createSessionRuntime(
 		const retired = bindings.get(sessionKey);
 		if (!retired) return;
 		bindings.delete(sessionKey);
+		clearFooter(sessionKey);
 		if (topLevelKey === sessionKey) topLevelKey = undefined;
 		log.info(`retiring ${retired.id} binding for ${sessionKey} (${why})`);
 		const survivor = [...bindings.values()][0];
@@ -605,14 +607,9 @@ export function createSessionRuntime(
 	};
 
 	const reportStatus = (ctx: ExtensionContext, snapshot: ProfileSnapshot): void => {
-		if (!ctx.hasUI) return;
-		try {
-			const color = snapshot.id === "prod" ? "error" : "success";
-			const text = `\u25cf`;
-			ctx.ui.setStatus(PROFILE_STATUS_KEY, ctx.ui.theme?.fg ? ctx.ui.theme.fg(color, text) : text);
-		} catch (err) {
-			log.debug("could not set the profile status segment:", (err as Error).message);
-		}
+		// One writer owns the footer: it keeps the same profile's quota and
+		// drops a previous profile's quota on a switch.
+		reportFooter(ctx, { id: snapshot.id, sessionKey: snapshot.sessionKey });
 	};
 
 	/**

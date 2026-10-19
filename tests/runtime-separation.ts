@@ -466,7 +466,7 @@ try {
 	assert.equal(rollbackRuntime.bindingFor("rollback-session")?.id, "prod");
 	assert.equal(rollbackRuntime.isCurrent(rollbackOld), false, "the previous snapshot is stale");
 	assert.equal(rollbackCtx.statuses.at(-1)?.[0], "0agp");
-	assert.equal(rollbackCtx.statuses.at(-1)?.[1], "\u25cf");
+	assert.equal(rollbackCtx.statuses.at(-1)?.[1], "\u25cf quota unknown");
 
 	// No current model at all: nothing to move, so the switch is silent and the
 	// next model resolution uses the roles the switch already mapped.

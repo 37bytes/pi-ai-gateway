@@ -11,7 +11,7 @@
  *   4. register slash commands /cliproxy, /cliproxy-setup, /cliproxy-profile
  *   5. bind the session's environment (persisted, so a resume stays on it) and
  *      map model roles onto it, including for subagents
- *   6. register the footer's environment + quota segments
+ *   6. register the footer's single environment + quota row
  *
  * All discovery + apply errors are logged but never abort extension load —
  * a missing/broken proxy must not prevent Pi from starting.
@@ -32,6 +32,7 @@ import { log, setLogSink } from "./src/log.ts";
 import { PROFILE_FLAG, type ProfileSnapshot, describeProfile } from "./src/profile-context.ts";
 import { ensureProfileLayout } from "./src/profiles-migration.ts";
 import { type SessionRuntime, runtimeFor } from "./src/session-runtime.ts";
+import { reportFooter } from "./src/status-footer.ts";
 import { renderQuotaSegment } from "./src/status-quota.ts";
 import {
 	isUsageFresh,
@@ -41,12 +42,12 @@ import {
 	writeUsageCache,
 } from "./src/usage-shared-cache.ts";
 
-/** Status-line key. The leading "0" makes it sort before alphabetic keys so
- * the quota segment appears first on the footer's extension-status line. */
-const QUOTA_STATUS_KEY = "0quota";
 /** Minimum gap between network fetches triggered by turn_end, even if the
  * shared file cache is stale (prevents burst fetches during rapid turns). */
 const TURN_FETCH_DEBOUNCE_MS = 5_000;
+
+/** Latest quota render request per session; older async results are dropped. */
+const quotaRefreshRequests = new Map<string, number>();
 
 /** Guards the legacy-source warning so it appears once per session. */
 let legacyUsageWarned = false;
@@ -205,22 +206,34 @@ async function refreshQuotaStatus(
 	const snapshot = runtime.snapshotFor(ctx);
 	const { ui } = ctx;
 	const model = ctx.model;
-	if (!snapshot) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
-		return;
-	}
+	if (!snapshot) return;
+	const sessionKey = snapshot.sessionKey;
+	const requestId = (quotaRefreshRequests.get(sessionKey) ?? 0) + 1;
+	quotaRefreshRequests.set(sessionKey, requestId);
+	// A refresh may finish after the session switched environment or model.
+	// Only the newest request for a still-current binding may write the footer;
+	// an older profile/model result must never replace what is displayed now.
+	const stillCurrent = () =>
+		quotaRefreshRequests.get(sessionKey) === requestId &&
+		runtime.isCurrent(snapshot) &&
+		ctx.model?.provider === model?.provider &&
+		ctx.model?.id === model?.id;
 	if (!model) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
+		// No model means no quota can be measured right now, but a valid value
+		// from the same profile must survive a transient absence.
+		if (stillCurrent()) reportFooter(ctx, snapshot);
 		return;
 	}
 	const usage = await loadUsageCached(snapshot, opts);
+	if (!stillCurrent()) return;
 	if (!usage) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
+		reportFooter(ctx, snapshot, null);
 		return;
 	}
 	const discovery = readDiscoveryCache(snapshot.paths, snapshot.discoveryScope)?.discovery;
+	if (!stillCurrent()) return;
 	if (!discovery) {
-		ui.setStatus(QUOTA_STATUS_KEY, undefined);
+		reportFooter(ctx, snapshot, null);
 		return;
 	}
 	const current = registrationConfig(snapshot.cfg, discovery, snapshot.id);
@@ -257,7 +270,8 @@ async function refreshQuotaStatus(
 				{ localStale: usage.stale },
 			)
 		: null;
-	ui.setStatus(QUOTA_STATUS_KEY, rendered ?? undefined);
+	if (!stillCurrent()) return;
+	reportFooter(ctx, snapshot, rendered);
 }
 
 /**

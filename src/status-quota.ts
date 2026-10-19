@@ -1,12 +1,17 @@
-// Status-line quota renderer: produces the compact segment shown in the footer.
+// Status-line quota renderer: produces the compact quota segment appended to
+// the environment contour dot by status-footer.ts.
 //
-// Format:  <gauge-icon> <braille-5h><braille-7d> <5h%>/<7d%>
-// Example: 󰐧 ⣷⣤ 83/23   (claude: 5h=83% green, 7d=23% yellow)
+// Format:  <braille-period> <percentage> ...   (one group per real window)
+// Example: ⣷ 83  🗓 23   (5h=83% green, 7d=23% yellow)
 //
 // Context-aware: discovery supplies connector identity, never a slug heuristic.
 //
+// Periods come from `durationSeconds` when the server reports it; a legacy
+// name (5h/7d/weekly/monthly) is only used in its absence. `primary`,
+// `secondary`, `rolling` and reset times are never inferred as durations.
+//
 // Aggregation: MAX remaining fraction across live accounts (not disabled,
-// not unavailable) for each 5h/7d window label.
+// not unavailable) for each actual duration, or each legacy named period.
 //
 // Colors: green ≥70% · yellow 30–69% · red <30%
 
@@ -46,9 +51,6 @@ function isUsableGroup(group: UsageGroup, now: number, aggregateStale: boolean):
 		typeof group.remainingFraction === "number" && Number.isFinite(group.remainingFraction);
 }
 
-/** nf-md-gauge (Nerd Font Material Design speedometer). */
-const GAUGE_ICON = "\u{F0627}";
-
 /** Braille fill chars, 8 levels (empty → full). */
 const BRAILLE = ["⡀", "⠂", "⣀", "⣄", "⣤", "⣶", "⣷", "⣾"];
 
@@ -65,16 +67,87 @@ function isLiveAccount(a: UsageAccount): boolean {
 	);
 }
 
-/** Does a group label refer to a 5-hour window? */
-function is5hGroup(g: UsageGroup): boolean {
-	const s = `${g.id} ${g.label ?? ""}`.toLowerCase();
-	return s.includes("5h") || s.includes("five-hour") || s.includes("five hour");
+/** A rough period family used only for ordering and the compact symbol. */
+type WindowPeriod = "hourly" | "weekly" | "monthly" | "other";
+
+/** Sort weight: equivalent seconds for legacy names, unknown periods last. */
+const PERIOD_SECONDS: Record<WindowPeriod, number> = {
+	hourly: 18_000,
+	weekly: 604_800,
+	monthly: 2_592_000,
+	other: Number.POSITIVE_INFINITY,
+};
+
+/** Compact period symbol: hour, week, month, other. */
+const PERIOD_SYMBOL: Record<WindowPeriod, string> = {
+	hourly: "\u23f1",
+	weekly: "\ud83d\uddd3",
+	monthly: "\ud83d\udcc5",
+	other: "\u2022",
+};
+
+/**
+ * Actual window length in seconds, or null when the server did not report a
+ * usable one. Non-positive, fractional, non-finite and oversized values are
+ * unknown — never zero and never a default period.
+ */
+function durationSecondsOf(g: UsageGroup): number | null {
+	const value = g.durationSeconds;
+	return typeof value === "number" &&
+		Number.isInteger(value) &&
+		value > 0 &&
+		value <= Number.MAX_SAFE_INTEGER
+		? value
+		: null;
 }
 
-/** Does a group label refer to a 7-day window? */
-function is7dGroup(g: UsageGroup): boolean {
-	const s = `${g.id} ${g.label ?? ""}`.toLowerCase();
-	return s.includes("7d") || s.includes("seven-day") || s.includes("seven day");
+/**
+ * Classify a window. Numeric duration wins even when the name contradicts it;
+ * names are only a legacy fallback when no duration was reported. `primary`,
+ * `secondary` and `rolling` carry no duration evidence (they describe position
+ * or reset behavior) and must never be read as hourly.
+ */
+function windowPeriod(g: UsageGroup): WindowPeriod {
+	const reported = g.durationSeconds;
+	// A supplied value is authoritative even when malformed: it stays neutral
+	// rather than falling back to a name that could claim a period the server
+	// did not actually report. Only an absent/null field uses the legacy name.
+	if (reported !== undefined && reported !== null) {
+		const duration = durationSecondsOf(g);
+		if (duration === null) return "other";
+		// Short/subday windows share the stopwatch; the weekly icon is reserved
+		// for an exact seven-day window, and calendar months are only 28–31 days.
+		// Everything else stays neutral even though it still sorts by duration.
+		if (duration <= 6 * 3_600) return "hourly";
+		if (duration === 7 * 86_400) return "weekly";
+		if (
+			duration === 28 * 86_400 ||
+			duration === 29 * 86_400 ||
+			duration === 30 * 86_400 ||
+			duration === 31 * 86_400
+		) {
+			return "monthly";
+		}
+		return "other";
+	}
+	const text = `${g.id} ${g.label ?? ""}`.toLowerCase();
+	if (/5h|five[- ]hour|hourly/.test(text)) return "hourly";
+	if (/7d|seven[- ]day|weekly|\bweek\b/.test(text)) return "weekly";
+	if (/monthly|\bmonth\b|30d/.test(text)) return "monthly";
+	return "other";
+}
+
+/**
+ * Bucket identity. Two accounts that report the same id with different actual
+ * durations are different windows; without a duration, an explicit named
+ * period keeps its semantics and everything else is keyed by its own id.
+ */
+function windowKey(g: UsageGroup): string {
+	const duration = durationSecondsOf(g);
+	if (duration !== null) return `duration:${duration}`;
+	const period = windowPeriod(g);
+	if (period !== "other") return `period:${period}`;
+	return `name:${g.id}`;
 }
 
 /**
@@ -145,29 +218,6 @@ function clamp(f: number): number {
 	return Math.max(0, Math.min(1, f));
 }
 
-/** Ascending period order for the compact footer: hourly, weekly, monthly. */
-function quotaWindowRank(id: string, label: string): number {
-	const text = `${id} ${label}`.toLowerCase();
-	if (/rolling|hour|5h|five[- ]hour|primary/.test(text)) return 0;
-	if (/weekly|week|7d|seven[- ]day/.test(text)) return 1;
-	if (/monthly|month|30d/.test(text)) return 2;
-	return 3;
-}
-
-/** Compact period symbol: hour, week, month, other. */
-function quotaWindowSymbol(id: string, label: string): string {
-	switch (quotaWindowRank(id, label)) {
-		case 0:
-			return "\u23f1";
-		case 1:
-			return "\ud83d\uddd3";
-		case 2:
-			return "\ud83d\udcc5";
-		default:
-			return "\u2022";
-	}
-}
-
 /** Braille fill char for a given fraction (8 levels). */
 function brailleFor(fraction: number): string {
 	const idx = Math.min(
@@ -226,49 +276,67 @@ export function renderQuotaSegment(
 		return scope === null || (!!modelID && scopeMatchesModel(scope, modelID));
 	};
 
-	// A weekly window scoped to the selected model, e.g. Fable. It is a sub-cap
-	// on the weekly pool rather than a separate allowance, so it is shown
-	// alongside the account-wide weekly figure, never instead of it.
-	const isSelectedModelWindow = (g: UsageGroup) => {
-		if (explicitModels(g).length) return is7dGroup(g) && matchesSelection(g);
-		const scope = scopedModelName(g);
-		return !!modelID && scope !== null && scopeMatchesModel(scope, modelID);
-	};
+	const isScopedWindow = (g: UsageGroup) =>
+		explicitModels(g).length > 0 || scopedModelName(g) !== null;
+	const bucketKey = (g: UsageGroup) =>
+		isScopedWindow(g) ? `model:${windowKey(g)}` : windowKey(g);
 
-	const w5 = aggregateWindow(accounts, (g) => is5hGroup(g) && matchesSelection(g), now, aggregateStale);
-	// Other models' scoped windows say nothing about the model in use, and
-	// including them used to drag the weekly figure down for no reason.
-	const w7 = aggregateWindow(
-		accounts,
-		(g) => is7dGroup(g) && scopedModelName(g) === null && !explicitModels(g).length,
-		now,
-		aggregateStale,
-	);
-	const wModel = aggregateWindow(accounts, isSelectedModelWindow, now, aggregateStale);
-	// Other server-defined periods (monthly, subscription, daily, etc.) retain
-	// their own labels. A known capacity must not disappear just because it is
-	// not a 5h/7d window, and unlike periods must never be added together.
-	const genericLabels = new Map<string, string>();
+	// Every usable window contributes to exactly one bucket. Buckets are keyed
+	// by actual duration when the server reports one, so the same id with
+	// different lengths on different accounts stays two windows; model-scoped
+	// caps are separate from the account-wide pool of the same period.
+	interface WindowBucket {
+		key: string;
+		period: WindowPeriod;
+		/** Exact reported duration, for stable numeric ordering within a period. */
+		duration: number | null;
+		label: string;
+		scoped: boolean;
+	}
+	const buckets = new Map<string, WindowBucket>();
 	for (const account of accounts) {
 		if (!isLiveAccount(account)) continue;
 		for (const group of account.groups ?? []) {
-			if (isUsableGroup(group, now, aggregateStale) && matchesSelection(group) && !is5hGroup(group) && !is7dGroup(group)) {
-				genericLabels.set(group.id, group.label?.trim() || group.id);
-			}
+			if (!isUsableGroup(group, now, aggregateStale) || !matchesSelection(group)) continue;
+			const key = bucketKey(group);
+			if (buckets.has(key)) continue;
+			const scoped = isScopedWindow(group);
+			buckets.set(key, {
+				key,
+				period: windowPeriod(group),
+				duration: durationSecondsOf(group),
+				label: group.label?.trim() || group.id,
+				scoped,
+			});
 		}
 	}
-	const genericWindows: Array<{ id: string; label: string; fraction: number; rank: number }> = [];
-	for (const [id, label] of genericLabels) {
-		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group), now, aggregateStale);
-		if (aggregate) genericWindows.push({ id, label, fraction: aggregate.fraction, rank: quotaWindowRank(id, label) });
+
+	const windows: Array<{ bucket: WindowBucket; fraction: number }> = [];
+	for (const bucket of buckets.values()) {
+		const aggregate = aggregateWindow(
+			accounts,
+			(group) => matchesSelection(group) && bucketKey(group) === bucket.key,
+			now,
+			aggregateStale,
+		);
+		if (aggregate) windows.push({ bucket, fraction: aggregate.fraction });
 	}
-	// Fixed ascending period order: hourly/rolling, weekly, monthly, then
-	// server-defined periods. A provider that reports only some of them keeps
-	// the relative order instead of the order the accounts happened to arrive in.
-	genericWindows.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+	// Numeric durations sort globally ascending; explicit legacy names are
+	// compared at their equivalent duration. Anything with neither evidence
+	// (including a supplied invalid value) stays last. Model-scoped caps keep
+	// their own bucket and follow the account-wide window of the same period.
+	windows.sort((a, b) => {
+		const orderA = a.bucket.duration ?? PERIOD_SECONDS[a.bucket.period];
+		const orderB = b.bucket.duration ?? PERIOD_SECONDS[b.bucket.period];
+		if (orderA !== orderB) return orderA - orderB;
+		return (
+			Number(a.bucket.scoped) - Number(b.bucket.scoped) ||
+			a.bucket.label.localeCompare(b.bucket.label)
+		);
+	});
 
 	// An authorized subscription without a fresh measurement is not zero quota.
-	if (!w5 && !w7 && !wModel && genericWindows.length === 0) {
+	if (windows.length === 0) {
 		const stale = accounts.some((account) => {
 			const accountStale = account.stale || account.status === "stale" || account.state === "stale";
 			if (!account.groups?.length) return accountStale;
@@ -278,19 +346,16 @@ export function renderQuotaSegment(
 		return theme.fg("dim", stale ? "quota stale" : accounts.some((a) => a.supported) ? "quota unknown" : "quota unsupported");
 	}
 
-	const parts: string[] = [theme.fg("dim", GAUGE_ICON)];
-	const push = (symbol: string, fraction: number) => {
-		const color = colorForFraction(fraction);
+	// The environment contour dot that used to precede this segment is now the
+	// single row's leading symbol, so no gauge icon is repeated here.
+	const parts: string[] = [];
+	for (const window of windows) {
+		const color = colorForFraction(window.fraction);
 		parts.push(
-			`${theme.fg("dim", symbol)} ${theme.fg(color, brailleFor(fraction))} ${theme.fg(color, String(pct(fraction)))}`,
+			`${theme.fg("dim", PERIOD_SYMBOL[window.bucket.period])} ` +
+				`${theme.fg(color, brailleFor(window.fraction))} ${theme.fg(color, String(pct(window.fraction)))}`,
 		);
-	};
-
-	if (w5) push("\u23f1", w5.fraction);
-	if (w7) push("\ud83d\uddd3", w7.fraction);
-	if (wModel) push("\ud83d\uddd3", wModel.fraction);
-	for (const window of genericWindows) push(quotaWindowSymbol(window.id, window.label), window.fraction);
-
+	}
 	return parts.join("  ");
 }
 

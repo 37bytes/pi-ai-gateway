@@ -12,6 +12,7 @@ import {
 import { cacheScope } from "../src/cache-scope.ts";
 import { profilePaths } from "../src/profiles.ts";
 import { PROFILE_STATUS_KEY } from "../src/session-runtime.ts";
+import { FOOTER_STATUS_KEY, clearFooter, reportFooter } from "../src/status-footer.ts";
 import { renderQuotaSegment } from "../src/status-quota.ts";
 import { renderUsage } from "../src/ui-usage.ts";
 
@@ -163,11 +164,272 @@ try {
 		modelId,
 	)!;
 	assert.ok(
-		ordered.indexOf("\u23f1") < ordered.indexOf("\ud83d\uddd3") &&
-			ordered.indexOf("\ud83d\uddd3") < ordered.indexOf("\ud83d\udcc5"),
-		`quota windows must render hourly, weekly, monthly regardless of server order: ${ordered}`,
+		ordered.indexOf("\ud83d\uddd3") < ordered.indexOf("\ud83d\udcc5") &&
+			ordered.indexOf("\ud83d\udcc5") < ordered.indexOf("\u2022"),
+		`quota windows must render weekly, monthly, then unknown periods regardless of server order: ${ordered}`,
 	);
-	assert.match(ordered, /\u23f1.*70.*\ud83d\uddd3.*60.*\ud83d\udcc5.*50/);
+	assert.match(ordered, /\ud83d\uddd3.*60.*\ud83d\udcc5.*50.*\u2022.*70/);
+	assert.doesNotMatch(
+		ordered,
+		/\u23f1/,
+		"rolling describes reset behavior, not an hourly duration",
+	);
+
+	// Actual durations decide the period, even when they oppose the historical
+	// primary/secondary order or contradict the server's name.
+	const durationGroups: UsageGroup[] = [
+		{ ...freshWindow, id: "primary", label: "primary", durationSeconds: 604_800, remainingFraction: 0.42 },
+		{ ...freshWindow, id: "secondary", label: "secondary", durationSeconds: 18_000, remainingFraction: 0.83 },
+	];
+	const durationOrdered = renderQuotaSegment(
+		{ ...usage, accounts: [{ ...freshAccount, groups: durationGroups }] },
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.ok(
+		durationOrdered.indexOf("\u23f1") < durationOrdered.indexOf("\ud83d\uddd3"),
+		`a 18000s secondary window sorts before a 604800s primary window: ${durationOrdered}`,
+	);
+	assert.match(durationOrdered, /\u23f1.*83.*\ud83d\uddd3.*42/);
+	assert.doesNotMatch(durationOrdered, /\u2022/, "known durations must not fall back to unknown");
+
+	// A name that says 5h cannot override a reported 7-day duration.
+	assert.match(
+		renderQuotaSegment(
+			{
+				...usage,
+				accounts: [
+					{
+						...freshAccount,
+						groups: [{ ...freshWindow, id: "5h", label: "5h", durationSeconds: 604_800, remainingFraction: 0.42 }],
+					},
+				],
+			},
+			binding,
+			theme,
+			modelId,
+		)!,
+		/\ud83d\uddd3.*42/,
+		"numeric duration wins over a conflicting legacy name",
+	);
+
+	// The same id at two real durations is two windows, not one merged period.
+	const sameIdDifferentDurations = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [{ ...freshWindow, id: "primary", label: "primary", durationSeconds: 604_800, remainingFraction: 0.4 }],
+				},
+				{
+					...freshAccount,
+					account: "opaque-d",
+					authIndex: "opaque-d",
+					groups: [{ ...freshWindow, id: "primary", label: "primary", durationSeconds: 18_000, remainingFraction: 0.9 }],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.match(sameIdDifferentDurations, /\u23f1.*90.*\ud83d\uddd3.*40/);
+
+	// Without a duration, primary/secondary/rolling carry no period evidence and
+	// use the neutral symbol instead of being guessed as hourly.
+	const neutral = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [
+						{ ...freshWindow, id: "primary", label: "primary", remainingFraction: 0.4 },
+						{ ...freshWindow, id: "secondary", label: "secondary", remainingFraction: 0.6 },
+						{ ...freshWindow, id: "rolling", label: "rolling", remainingFraction: 0.8 },
+					],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.doesNotMatch(neutral, /\u23f1/, "position/reset names are never inferred as hourly");
+	assert.match(neutral, /\u2022.*40/);
+	assert.match(neutral, /\u2022.*60/);
+	assert.match(neutral, /\u2022.*80/);
+	const invalidDuration = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [{ ...freshWindow, id: "7d", label: "7d", durationSeconds: 0, remainingFraction: 0.4 }],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.match(
+		invalidDuration,
+		/\u2022.*40/,
+		"a supplied invalid duration stays neutral even beside a weekly label",
+	);
+	assert.doesNotMatch(invalidDuration, /\ud83d\uddd3/, "an invalid duration cannot fall back to a legacy name");
+
+	// Numeric durations sort globally ascending; explicit legacy names use
+	// their equivalent duration, and windows with no evidence stay last.
+	const ascendingDurations = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [
+						{ ...freshWindow, id: "month", label: "month", durationSeconds: 2_592_000, remainingFraction: 0.3 },
+						{ ...freshWindow, id: "day", label: "day", durationSeconds: 86_400, remainingFraction: 0.4 },
+						{ ...freshWindow, id: "hour", label: "hour", durationSeconds: 18_000, remainingFraction: 0.5 },
+						{ ...freshWindow, id: "legacy-week", label: "weekly", remainingFraction: 0.6 },
+						{ ...freshWindow, id: "rolling", label: "rolling", remainingFraction: 0.7 },
+					],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.match(
+		ascendingDurations,
+		/\u23f1.*50.*\u2022.*40.*\ud83d\uddd3.*60.*\ud83d\udcc5.*30.*\u2022.*70/,
+		"hour 18000s, day 86400s, legacy weekly, month 2592000s, then unknown",
+	);
+
+	// Icons are exact: only 604800s is weekly; calendar months are 28–31 days.
+	// Near-week and 27/32-day windows stay neutral and still sort by duration.
+	const durationPrecision = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [
+						{ ...freshWindow, id: "d32", label: "32d", durationSeconds: 32 * 86_400, remainingFraction: 0.9 },
+						{ ...freshWindow, id: "d31", label: "31d", durationSeconds: 31 * 86_400, remainingFraction: 0.8 },
+						{ ...freshWindow, id: "d30", label: "30d", durationSeconds: 30 * 86_400, remainingFraction: 0.7 },
+						{ ...freshWindow, id: "d29", label: "29d", durationSeconds: 29 * 86_400, remainingFraction: 0.6 },
+						{ ...freshWindow, id: "d28", label: "28d", durationSeconds: 28 * 86_400, remainingFraction: 0.5 },
+						{ ...freshWindow, id: "d27", label: "27d", durationSeconds: 27 * 86_400, remainingFraction: 0.4 },
+						{ ...freshWindow, id: "d8", label: "8d", durationSeconds: 8 * 86_400, remainingFraction: 0.3 },
+						{ ...freshWindow, id: "d7", label: "7d", durationSeconds: 7 * 86_400, remainingFraction: 0.2 },
+						{ ...freshWindow, id: "d6", label: "6d", durationSeconds: 6 * 86_400, remainingFraction: 0.1 },
+					],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.match(
+		durationPrecision,
+		/\u2022.*10.*\ud83d\uddd3.*20.*\u2022.*30.*\u2022.*40.*\ud83d\udcc5.*50.*\ud83d\udcc5.*60.*\ud83d\udcc5.*70.*\ud83d\udcc5.*80.*\u2022.*90/,
+		"6d neutral, exact 7d weekly, 8d/27d neutral, 28–31d monthly, 32d neutral",
+	);
+
+	// The stopwatch stays for short/subday windows only.
+	assert.match(
+		renderQuotaSegment(
+			{
+				...usage,
+				accounts: [
+					{
+						...freshAccount,
+						groups: [
+							{ ...freshWindow, id: "h6", label: "6h", durationSeconds: 6 * 3_600, remainingFraction: 0.6 },
+							{ ...freshWindow, id: "h7", label: "7h", durationSeconds: 7 * 3_600, remainingFraction: 0.7 },
+						],
+					},
+				],
+			},
+			binding,
+			theme,
+			modelId,
+		)!,
+		/\u23f1.*60.*\u2022.*70/,
+		"6h is short; 7h is neutral",
+	);
+
+	// A model-scoped cap stays its own window and follows the account-wide one
+	// when both describe the same real duration.
+	const scopedSameDuration = renderQuotaSegment(
+		{
+			...usage,
+			accounts: [
+				{
+					...freshAccount,
+					groups: [
+						{ ...freshWindow, id: "primary", label: "primary", durationSeconds: 18_000, remainingFraction: 0.5 },
+						{
+							...freshWindow,
+							id: "five-hour-astra",
+							label: "5h Astra",
+							model: modelId,
+							durationSeconds: 18_000,
+							remainingFraction: 0.2,
+						},
+					],
+				},
+			],
+		},
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.match(scopedSameDuration, /\u23f1.*50.*\u23f1.*20/, "model-scoped windows remain separate");
+	// One writer owns the row: binding again on the same profile keeps a valid
+	// quota, while a switch starts without the old profile's numbers.
+	const footerWrites: Array<[string, string | undefined]> = [];
+	const footerColors: string[] = [];
+	const footerTheme = {
+		fg(color: "success" | "warning" | "error" | "dim", text: string) {
+			footerColors.push(color);
+			return text;
+		},
+	};
+	const footerCtx = {
+		hasUI: true,
+		ui: {
+			theme: footerTheme,
+			setStatus(key: string, value: string | undefined) {
+				footerWrites.push([key, value]);
+			},
+		},
+	};
+	reportFooter(footerCtx, { id: "test", sessionKey: "footer-session" }, "\u23f1 x 50");
+	reportFooter(footerCtx, { id: "test", sessionKey: "footer-session" });
+	assert.deepEqual(footerColors, ["success", "success"], "test keeps its green contour dot");
+	assert.equal(
+		footerWrites.at(-1)?.[1],
+		"\u25cf \u23f1 x 50",
+		"re-binding the same profile must not erase its quota",
+	);
+	reportFooter(footerCtx, { id: "prod", sessionKey: "footer-session" });
+	assert.equal(footerColors.at(-2), "error", "prod keeps its red contour dot");
+	assert.equal(
+		footerWrites.at(-1)?.[1],
+		"\u25cf quota unknown",
+		"a profile switch may not retain the previous profile's quota",
+	);
+	assert.doesNotMatch(footerWrites.at(-1)?.[1]!, /prod|test|https?:/i);
+	assert.ok(footerWrites.every(([key]) => key === FOOTER_STATUS_KEY));
+	clearFooter("footer-session");
+
 	const staleOtherModel: UsageGroup = {
 		...freshWindow,
 		id: "seven-day-other",
@@ -260,6 +522,7 @@ try {
 
 	let usageReads = 0;
 	let failUsage = false;
+	let usageGate: Promise<void> | null = null;
 	const authorities: string[] = [];
 	const json = (body: unknown, status = 200) =>
 		new Response(JSON.stringify(body), {
@@ -281,6 +544,11 @@ try {
 		if (path === "/v0/resource/plugins/pi-bridge/usage") {
 			usageReads++;
 			authorities.push(request.headers.get("authorization") ?? "");
+			if (usageGate) {
+				const gate = usageGate;
+				usageGate = null;
+				await gate;
+			}
 			return failUsage ? json({}, 503) : json(usage);
 		}
 		throw new Error(`Unexpected fixture path: ${path}`);
@@ -344,7 +612,7 @@ try {
 	failUsage = true;
 	assert.equal(
 		await emit("before_agent_start"),
-		"quota stale",
+		"\u25cf quota stale",
 		"failed refresh carries local staleness",
 	);
 	assert.equal(usageReads, 2);
@@ -354,17 +622,17 @@ try {
 	const beforeLock = usageReads;
 	assert.equal(
 		await emit("before_agent_start"),
-		"quota stale",
+		"\u25cf quota stale",
 		"lock contention carries local staleness",
 	);
 	assert.equal(usageReads, beforeLock);
 	rmSync(prodPaths.usageLockPath);
 
-	assert.equal(await emit("turn_end"), "quota stale");
+	assert.equal(await emit("turn_end"), "\u25cf quota stale");
 	const beforeReadOnly = usageReads;
 	assert.equal(
 		await emit("turn_end"),
-		"quota stale",
+		"\u25cf quota stale",
 		"debounced read-only fallback carries local staleness",
 	);
 	assert.equal(usageReads, beforeReadOnly);
@@ -382,11 +650,18 @@ try {
 	// A real model switch must refresh an aged window instead of leaving the
 	// footer on the previous cache, and must reuse a window refreshed moments ago.
 	const switchReads = usageReads;
-	assert.match((await emit("session_start"))!, /\ud83d\uddd3 .* 37/);
+	assert.match((await emit("session_start"))!, /\u25cf .*\ud83d\uddd3 .* 37/);
 	assert.match(
 		statusByKey[PROFILE_STATUS_KEY]!,
-		/\u25cf$/,
-		"the profile segment is a colored contour indicator, not a URL or label",
+		/^\u25cf .*\ud83d\uddd3 .* 37$/,
+		"the contour dot and quota share one compact row",
+	);
+	assert.deepEqual(
+		Object.entries(statusByKey)
+			.filter(([, value]) => value !== undefined)
+			.map(([key]) => key),
+		[PROFILE_STATUS_KEY],
+		"only one status key may own the footer",
 	);
 	now += USAGE_CACHE_TTL_MS;
 	ctx.model = { provider: "deepseek", id: switchModelId };
@@ -402,6 +677,31 @@ try {
 		"a switch inside the refreshed window must not refetch",
 	);
 	assert.match(status!, /\ud83d\uddd3 .* 37/);
+
+	// A refresh that started for the previous model must not overwrite the
+	// footer after a switch. The newer request owns the row; the late result is
+	// dropped even though it eventually refreshes the shared cache.
+	now += USAGE_CACHE_TTL_MS;
+	ctx.model = { provider: "codex", id: modelId };
+	const gate = Promise.withResolvers<void>();
+	usageGate = gate.promise;
+	const staleRefresh = emit("before_agent_start");
+	await delay(10);
+	ctx.model = { provider: "deepseek", id: switchModelId };
+	assert.equal(
+		await emit("before_agent_start"),
+		"\u25cf quota stale",
+		"the current model owns the footer while its data is still stale",
+	);
+	gate.resolve();
+	await staleRefresh;
+	assert.equal(
+		status,
+		"\u25cf quota stale",
+		"a late old-model refresh must not replace the current footer",
+	);
+	ctx.model = { provider: "codex", id: modelId };
+	assert.match((await emit("before_agent_start"))!, /\ud83d\uddd3 .* 37/);
 	await emit("session_shutdown");
 
 	failUsage = true;
@@ -416,7 +716,7 @@ try {
 	);
 	assert.equal(
 		await emit("before_agent_start"),
-		undefined,
+		"\u25cf quota unknown",
 		"another key must not inherit even a fresh old document",
 	);
 	assert.equal(authorities.at(-1), "Bearer fixture-key-b");
@@ -429,7 +729,7 @@ try {
 	);
 	assert.equal(
 		await emit("before_agent_start"),
-		undefined,
+		"\u25cf quota unknown",
 		"same key at a different endpoint must not inherit old quota",
 	);
 	writeFileSync(configPath, JSON.stringify(cfg));
@@ -452,7 +752,7 @@ try {
 	);
 	assert.equal(
 		await emit("before_agent_start"),
-		"quota stale",
+		"\u25cf quota stale",
 		"even a fresh client cache cannot resurrect an expired reset",
 	);
 	const stored = JSON.parse(readFileSync(prodPaths.usageCachePath, "utf8"));
