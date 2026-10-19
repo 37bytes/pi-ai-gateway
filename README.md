@@ -22,6 +22,14 @@ and, when present, its generated `omp.settings.yml` role overlay; they do not
 relocate OMP's sessions or touch another process's settings. OMP's own
 `--profile` flag is a different feature and is not the AGP server selector.
 
+The launchers start a **new conversation** on their environment. OMP otherwise
+auto-resumes the last conversation of the working directory, and that
+conversation keeps its own persisted environment — `omp-test` must not silently
+show or move a PROD conversation. Continue one explicitly with
+`omp-test --continue` / `--resume <id>`; the saved binding still wins. A bare
+`omp` keeps OMP's normal auto-resume and uses the registry default for a new
+conversation.
+
 All gateway providers are explicitly namespaced: `agp-prod-codex`,
 `agp-test-codex`, `agp-test-opencode`, and so on. Their local model IDs remain
 unchanged. `agp-test-codex/gpt-6-astra` still sends the exact server wire ID:
