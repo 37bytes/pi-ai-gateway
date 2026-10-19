@@ -163,14 +163,25 @@ function catalogHasAny(catalog: ProfileCatalog, model: string): boolean {
 	return false;
 }
 
-export async function adoptLegacySessionModel(
+/**
+ * Restore the model a resumed session recorded, when its selector predates a
+ * rename or environment namespacing and the target environment serves it.
+ *
+ * A session with history but no binding (pre-profile) and a bound session whose
+ * provider was renamed both hit this path. The stored selector is the user's
+ * intent; we move to the equivalent served model through the host's normal
+ * model change, and never invent one. An explicit `--model` wins over history.
+ */
+export async function adoptStoredSessionModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	snapshot: ProfileSnapshot,
 	catalog: ProfileCatalog | undefined,
 	profileIds: readonly string[],
 ): Promise<boolean> {
-	if (!catalog) return false;
+	if (process.argv.some((arg) => arg === "--model" || arg.startsWith("--model=") || arg === "--provider" || arg.startsWith("--provider="))) {
+		return false;
+	}
 	let entries: { type: string; model?: unknown }[] = [];
 	try {
 		entries = (ctx.sessionManager?.getEntries() ?? []) as { type: string; model?: unknown }[];
@@ -180,17 +191,22 @@ export async function adoptLegacySessionModel(
 	}
 	const stored = storedModelSelector(entries);
 	if (!stored) return false;
+	const current = ctx.models?.current?.() ?? ctx.model;
 	const parts = splitSelector(stored);
 	const renamed = parts ? LEGACY_DIRECT_NAMES[parts.provider] : undefined;
 	if (parts && renamed) {
 		const selector = `${renamed}/${parts.model}${parts.effort}`;
 		if (!ctx.models?.resolve?.(selector)) return false;
+		if (current?.provider === renamed && current.id === parts.model) return false;
 		const moved = await applyModelChange(pi, ctx, selector, snapshot.label);
 		if (moved) log.info(`session model ${stored} moved to ${selector} (renamed direct provider)`);
 		return moved;
 	}
+	if (!catalog) return false;
 	const mapped = mapSelector(stored, profileIds, catalog);
 	if (!mapped) return false;
+	const target = splitSelector(mapped.mapped);
+	if (target && current?.provider === target.provider && current.id === target.model) return false;
 	const moved = await applyModelChange(pi, ctx, mapped.mapped, snapshot.label);
 	if (moved) log.info(`session model ${stored} moved to ${mapped.mapped} on ${snapshot.id}`);
 	return moved;

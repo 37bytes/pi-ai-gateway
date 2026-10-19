@@ -12,23 +12,22 @@ profile; another process can use a different environment simultaneously.
 The built-in profile names are `prod` and `test`. The first migration keeps the
 existing endpoint in `prod`; changing `profiles.json.defaultProfile` changes
 only the default for new conversations. A saved conversation retains its
-environment, even when resumed from a differently configured launcher. An
+environment, even when resumed from a differently configured process. An
 unknown explicit profile fails closed instead of falling back to production.
 
-Use `AGP_PROFILE=prod omp`, `AGP_PROFILE=test omp`, or the packaged `omp-prod`
-and `omp-test` launchers. Install the two launchers and their shared
-`omp-profile-launch.sh` in the same PATH directory. They select the AGP profile
-and, when present, its generated `omp.settings.yml` role overlay; they do not
-relocate OMP's sessions or touch another process's settings. OMP's own
-`--profile` flag is a different feature and is not the AGP server selector.
+Use one `omp`. A new conversation starts on the registry default (`test`), and
+`/cliproxy-profile prod|test` switches the current session to another
+environment by starting a new conversation; the previous one stays saved on its
+own server. For scripts, headless runs and a second concurrent process, select
+the process profile with `AGP_PROFILE=prod omp` (or `--agp-profile prod`). OMP's
+own `--profile` flag is a different feature and is not the AGP server selector.
 
-The launchers start a **new conversation** on their environment. OMP otherwise
-auto-resumes the last conversation of the working directory, and that
-conversation keeps its own persisted environment — `omp-test` must not silently
-show or move a PROD conversation. Continue one explicitly with
-`omp-test --continue` / `--resume <id>`; the saved binding still wins. A bare
-`omp` keeps OMP's normal auto-resume and uses the registry default for a new
-conversation.
+A resumed conversation keeps its persisted environment, even when the process
+was launched with a different `AGP_PROFILE`. That is intentional: history never
+moves silently. Resume may restore the model recorded by the session when that
+provider was renamed (`cpa-codex` → `direct-cpa-codex`, `ds-local` →
+`direct-deepseek`) or when an old AGP namespace is still served by the selected
+environment.
 
 All gateway providers are explicitly namespaced: `agp-prod-codex`,
 `agp-test-codex`, `agp-test-opencode`, and so on. Their local model IDs remain

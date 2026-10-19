@@ -25,7 +25,7 @@ const { cacheScope } = await import("../src/cache-scope.ts");
 const { PREFERRED_CONTRACT } = await import("../src/fetch-usage.ts");
 const { createSessionRuntime } = await import("../src/session-runtime.ts");
 const { PROFILE_ENTRY_TYPE } = await import("../src/profile-context.ts");
-const { adoptLegacySessionModel } = await import("../src/session-model.ts");
+const { adoptStoredSessionModel } = await import("../src/session-model.ts");
 
 const ENDPOINT = "https://prod.test/v1";
 const API_KEY = "prod-key";
@@ -216,7 +216,7 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 		};
 		const runtime = createSessionRuntime(pi, { root: { id: "prod", source: "launch-env" } });
 		runtime.registerDiscovery(runtime.rootSnapshot(), discovery);
-		const moved = await adoptLegacySessionModel(
+		const moved = await adoptStoredSessionModel(
 			pi,
 			ctx,
 			runtime.rootSnapshot(),
@@ -281,7 +281,7 @@ writeDiscoveryCache(profilePaths("prod"), discovery, cacheScope(ENDPOINT, API_KE
 	};
 	const runtime = createSessionRuntime(pi, { root: { id: "prod", source: "launch-env" } });
 	runtime.registerDiscovery(runtime.rootSnapshot(), discovery);
-	const moved = await adoptLegacySessionModel(
+	const moved = await adoptStoredSessionModel(
 		pi,
 		ctx,
 		runtime.rootSnapshot(),

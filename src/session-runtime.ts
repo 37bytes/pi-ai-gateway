@@ -67,7 +67,7 @@ import type { ProfileCatalog } from "./role-map.ts";
 import { remapRoles, remapSpawnPatterns } from "./role-map.ts";
 import {
 	type ModelMovePlan,
-	adoptLegacySessionModel,
+	adoptStoredSessionModel,
 	applyModelChange,
 	planModelMove,
 } from "./session-model.ts";
@@ -376,8 +376,8 @@ export function createSessionRuntime(
 			log.warn(`role mapping kept these selectors as configured: ${unresolved}`);
 		}
 		if (Object.keys(roles.mapped).length === 0 && Object.keys(agents.mapped).length === 0) return;
-		// Persisted mapping for processes that start later (launchers pass it with
-		// --config) and for children OMP spawns outside this process.
+		// Persisted mapping for processes that start later (an explicit --config
+		// overlay) and for children OMP spawns outside this process.
 		try {
 			writeProfileOverlay(snapshot.paths, roles.mapped, agents.mapped);
 		} catch (err) {
@@ -511,12 +511,10 @@ export function createSessionRuntime(
 		// with --model for a different one, or a new conversation prepared by a
 		// switch), move it onto this environment — or say it cannot be served.
 		await alignModelWithBinding(ctx, snapshot, api);
-		if (binding.source === "legacy") {
-			// A pre-profile session stored a model under the old, unprefixed
-			// provider names; re-select it on this environment by appending a
-			// normal model change, never by rewriting history.
-			await adoptLegacySessionModel(pi, ctx, snapshot, catalogs.get(snapshot.id), profileIds());
-		}
+		// A resumed session may store a selector whose provider was renamed or
+		// whose former AGP namespace no longer exists. Restore it on this
+		// environment through a normal model change, never by rewriting history.
+		await adoptStoredSessionModel(pi, ctx, snapshot, catalogs.get(snapshot.id), profileIds());
 		return { snapshot, changed: true, legacy: binding.source === "legacy", blocked: null };
 	};
 
@@ -591,7 +589,9 @@ export function createSessionRuntime(
 	const reportStatus = (ctx: ExtensionContext, snapshot: ProfileSnapshot): void => {
 		if (!ctx.hasUI) return;
 		try {
-			ctx.ui.setStatus(PROFILE_STATUS_KEY, describeProfile(snapshot));
+			const color = snapshot.id === "prod" ? "error" : "success";
+			const text = `\u25cf ${snapshot.label}`;
+			ctx.ui.setStatus(PROFILE_STATUS_KEY, ctx.ui.theme?.fg ? ctx.ui.theme.fg(color, text) : text);
 		} catch (err) {
 			log.debug("could not set the profile status segment:", (err as Error).message);
 		}

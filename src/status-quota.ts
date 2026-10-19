@@ -145,6 +145,15 @@ function clamp(f: number): number {
 	return Math.max(0, Math.min(1, f));
 }
 
+/** Ascending period order for the compact footer: hourly, weekly, monthly. */
+function quotaWindowRank(id: string, label: string): number {
+	const text = `${id} ${label}`.toLowerCase();
+	if (/rolling|hour|5h|five[- ]hour|primary/.test(text)) return 0;
+	if (/weekly|week|7d|seven[- ]day/.test(text)) return 1;
+	if (/monthly|month|30d/.test(text)) return 2;
+	return 3;
+}
+
 /** Braille fill char for a given fraction (8 levels). */
 function brailleFor(fraction: number): string {
 	const idx = Math.min(
@@ -234,11 +243,15 @@ export function renderQuotaSegment(
 			}
 		}
 	}
-	const genericWindows: Array<{ label: string; fraction: number }> = [];
+	const genericWindows: Array<{ label: string; fraction: number; rank: number }> = [];
 	for (const [id, label] of genericLabels) {
 		const aggregate = aggregateWindow(accounts, (group) => group.id === id && matchesSelection(group), now, aggregateStale);
-		if (aggregate) genericWindows.push({ label, fraction: aggregate.fraction });
+		if (aggregate) genericWindows.push({ label, fraction: aggregate.fraction, rank: quotaWindowRank(id, label) });
 	}
+	// Fixed ascending period order: hourly/rolling, weekly, monthly, then
+	// server-defined periods. A provider that reports only some of them keeps
+	// the relative order instead of the order the accounts happened to arrive in.
+	genericWindows.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
 
 	// An authorized subscription without a fresh measurement is not zero quota.
 	if (!w5 && !w7 && !wModel && genericWindows.length === 0) {
@@ -267,6 +280,6 @@ export function renderQuotaSegment(
 	}
 	for (const window of genericWindows) push(window.label, window.fraction);
 
-	return parts.join(" ");
+	return parts.join("  ");
 }
 

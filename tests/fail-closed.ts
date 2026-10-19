@@ -1,6 +1,6 @@
 // An environment the user explicitly asked for (or that a session file was
 // bound to) must never degrade into a different environment. A typo in
-// `omp-test`/AGP_PROFILE, or a session bound to an environment this machine no
+// `AGP_PROFILE`/a session bound to an environment this machine no
 // longer has, has to stop before any discovery fetch or provider registration —
 // not quietly run the session on prod.
 //

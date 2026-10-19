@@ -10,7 +10,6 @@ import {
 	type UsageGroup,
 } from "../src/fetch-usage.ts";
 import { cacheScope } from "../src/cache-scope.ts";
-import { buildSnapshot, describeProfile } from "../src/profile-context.ts";
 import { profilePaths } from "../src/profiles.ts";
 import { PROFILE_STATUS_KEY } from "../src/session-runtime.ts";
 import { renderQuotaSegment } from "../src/status-quota.ts";
@@ -152,6 +151,23 @@ try {
 		/7d .* 37/,
 		"other connector staleness is not selected transport staleness",
 	);
+	const orderedGroups: UsageGroup[] = [
+		{ ...freshWindow, id: "opencode.monthly", label: "monthly", remainingFraction: 0.5 },
+		{ ...freshWindow, id: "opencode.weekly", label: "weekly", remainingFraction: 0.6 },
+		{ ...freshWindow, id: "opencode.rolling", label: "rolling", remainingFraction: 0.7 },
+	];
+	const ordered = renderQuotaSegment(
+		{ ...usage, accounts: [{ ...freshAccount, groups: orderedGroups }] },
+		binding,
+		theme,
+		modelId,
+	)!;
+	assert.ok(
+		ordered.indexOf("rolling") < ordered.indexOf("weekly") &&
+			ordered.indexOf("weekly") < ordered.indexOf("monthly"),
+		`quota windows must render hourly, weekly, monthly regardless of server order: ${ordered}`,
+	);
+	assert.match(ordered, /rolling.*70.*weekly.*60.*monthly.*50/);
 	const staleOtherModel: UsageGroup = {
 		...freshWindow,
 		id: "seven-day-other",
@@ -367,11 +383,10 @@ try {
 	// footer on the previous cache, and must reuse a window refreshed moments ago.
 	const switchReads = usageReads;
 	assert.match((await emit("session_start"))!, /7d .* 37/);
-	const prodSnapshot = buildSnapshot({ id: "prod", source: "launch-env" }, "quota", 1);
-	assert.equal(
-		statusByKey[PROFILE_STATUS_KEY],
-		describeProfile(prodSnapshot),
-		"the profile segment must name the active environment",
+	assert.match(
+		statusByKey[PROFILE_STATUS_KEY]!,
+		/\u25cf PROD/,
+		"the profile segment is a colored contour indicator, not a URL",
 	);
 	now += USAGE_CACHE_TTL_MS;
 	ctx.model = { provider: "agp-prod-deepseek", id: switchModelId };

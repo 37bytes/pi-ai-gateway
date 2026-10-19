@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.13",
+	"version": "0.4.3-agp.14",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -11,10 +11,7 @@
 	"files": [
 		"index.ts",
 		"src",
-		"README.md",
-		"scripts/omp-prod",
-		"scripts/omp-test",
-		"scripts/omp-profile-launch.sh"
+		"README.md"
 	],
 	"pi": {
 		"extensions": [
