@@ -24,9 +24,14 @@ relocate OMP's sessions or touch another process's settings. OMP's own
 
 All gateway providers are explicitly namespaced: `agp-prod-codex`,
 `agp-test-codex`, `agp-test-opencode`, and so on. Their local model IDs remain
-unchanged. `agp-test-codex/gpt-6-astra` still sends the exact server wire ID
+unchanged. `agp-test-codex/gpt-6-astra` still sends the exact server wire ID:
 `codex/gpt-6-astra`, not the display prefix. Direct and local providers are not
 renamed, removed or used as automatic fallbacks by this extension.
+
+Sessions recorded before the direct-provider cleanup (`cpa-codex`,
+`ds-local`) are re-selected onto `direct-cpa-codex` / `direct-deepseek` when the
+current host resolves that exact model. They are never moved onto an AGP
+environment and an unresolvable selector is left untouched.
 
 `/cliproxy-profile` reports the current environment and origin.
 `/cliproxy-profile test` or `prod` asks to start a **new conversation** on that

@@ -55,3 +55,16 @@ export function agpBaseName(name: string, profileIds: readonly string[]): string
 	const profile = agpProfileOf(name, profileIds);
 	return profile ? name.slice(`${AGP_PROVIDER_PREFIX}-${profile}-`.length) : name;
 }
+
+/**
+ * Direct providers renamed when the environments were split.
+ *
+ * A session (or a child task) recorded before that rename still names the old
+ * provider. The model is the same explicit reserve, so the plugin resolves the
+ * renamed provider instead of falling back to an AGP environment: prod and test
+ * must not silently replace a direct provider the user selected.
+ */
+export const LEGACY_DIRECT_NAMES: Readonly<Record<string, string>> = {
+	"cpa-codex": "direct-cpa-codex",
+	"ds-local": "direct-deepseek",
+};

@@ -420,7 +420,7 @@ try {
 	const directCtx = makeCtx({
 		sessionId: "direct-session",
 		kind: "main",
-		current: { provider: "ds-local", id: "deepseek-v4-pro" },
+		current: { provider: "direct-deepseek", id: "deepseek-v4-pro" },
 	});
 	await directRuntime.bindSession(asCtx(directCtx));
 	const directSwitch = await directRuntime.switchEnvironment(asCommandCtx(directCtx), "prod");
