@@ -76,6 +76,8 @@ import {
 export const PROFILE_STATUS_KEY = "0agp";
 /** Pseudo-session used for registration work done before any session exists. */
 export const ROOT_SESSION_KEY = "root";
+/** Pseudo-session holding cached providers of another environment until bind. */
+const PRELOAD_SESSION_PREFIX = "preload:";
 
 export interface SessionBinding {
 	id: string;
@@ -122,6 +124,13 @@ export interface SessionRuntime {
 	knownProfiles(): string[];
 	catalogFor(profile: string): ProfileCatalog | undefined;
 	registerDiscovery(snapshot: ProfileSnapshot, discovery: Discovery): void;
+	/**
+	 * Register cached providers of every configured environment before the host
+	 * restores a saved model. OMP throws on an unknown model during restore, and
+	 * a resumed session may belong to the environment that is not the process
+	 * default. Only caches are used; this never fetches.
+	 */
+	preloadProfiles(api: ExtensionAPI): Promise<void>;
 	/**
 	 * Register this environment's providers, gated on session and generation.
 	 * `api` names the owning host session's handle; omitted, it resolves from the
@@ -323,6 +332,33 @@ export function createSessionRuntime(
 		}
 	};
 
+	const preloadProfiles = async (api: ExtensionAPI): Promise<void> => {
+		for (const id of profileIds()) {
+			if (id === root?.id) continue;
+			const key = `${PRELOAD_SESSION_PREFIX}${id}`;
+			if (bindings.has(key)) continue;
+			const snapshot = buildSnapshot({ id, source: "launch-env" }, key, nextGeneration());
+			const cached = readDiscoveryCache(snapshot.paths, snapshot.discoveryScope);
+			if (!cached) continue;
+			bindings.set(key, { id, source: "launch-env", generation: snapshot.generation, api });
+			try {
+				registerDiscovery(snapshot, cached.discovery);
+				await applySnapshot(snapshot, cached.discovery, api);
+				log.info(`preloaded ${id} providers for session restore`);
+			} catch (err) {
+				bindings.delete(key);
+				log.warn(`could not preload ${id} providers:`, (err as Error).message);
+			}
+		}
+	};
+
+	/** Release restore-only registrations once the real session is bound. */
+	const retirePreloads = async (): Promise<void> => {
+		for (const key of [...bindings.keys()]) {
+			if (key.startsWith(PRELOAD_SESSION_PREFIX)) await retireSession(key, "session restore complete");
+		}
+	};
+
 	const applySnapshot = async (
 		snapshot: ProfileSnapshot,
 		discovery: Discovery,
@@ -515,6 +551,7 @@ export function createSessionRuntime(
 		// whose former AGP namespace no longer exists. Restore it on this
 		// environment through a normal model change, never by rewriting history.
 		await adoptStoredSessionModel(pi, ctx, snapshot, catalogs.get(snapshot.id), profileIds());
+		await retirePreloads();
 		return { snapshot, changed: true, legacy: binding.source === "legacy", blocked: null };
 	};
 
@@ -946,6 +983,7 @@ export function createSessionRuntime(
 		knownProfiles: () => [...catalogs.keys()],
 		catalogFor: (profile) => catalogs.get(profile),
 		registerDiscovery,
+		preloadProfiles,
 		applySnapshot,
 		applyRoleMapping,
 		roleMappingNotes: () => [...notes],

@@ -403,6 +403,16 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 		// nothing was registered for this session.
 	}
 
+	// OMP restores the saved model before session_start, and a saved session may
+	// belong to the other environment. Register every configured profile's cached
+	// providers now so that restore never hits an unknown model; bindSession
+	// releases the preloads that the real session does not need.
+	try {
+		await runtime.preloadProfiles(pi);
+	} catch (err) {
+		log.warn("could not preload environment providers:", (err as Error).message);
+	}
+
 	// -------- session environment binding
 	//
 	// A resumed session keeps the environment it was created on, so history and
