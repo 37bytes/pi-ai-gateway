@@ -31,7 +31,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 import { log } from "./log.ts";
 import type { ProfileSnapshot } from "./profile-context.ts";
-import { agpProfileOf, LEGACY_DIRECT_NAMES } from "./provider-names.ts";
+import { agpProfileOf } from "./provider-names.ts";
 import type { ProfileCatalog } from "./role-map.ts";
 import { mapSelector, splitSelector } from "./role-map.ts";
 
@@ -140,12 +140,6 @@ export function planModelMove(
 	const id = current.id;
 	if (!provider || !id) return { kind: "impossible", selector: "(unknown model)" };
 	const selector = `${provider}/${id}`;
-	const renamedProvider = LEGACY_DIRECT_NAMES[provider];
-	if (renamedProvider) {
-		const renamedSelector = `${renamedProvider}/${id}`;
-		if (ctx.models?.resolve?.(renamedSelector)) return { kind: "move", selector: renamedSelector };
-		return { kind: "direct", provider };
-	}
 	const mapped = mapSelector(selector, profileIds, catalog);
 	if (mapped) return { kind: "move", selector: mapped.mapped };
 	const namespace = agpProfileOf(provider, profileIds);
@@ -192,16 +186,6 @@ export async function adoptStoredSessionModel(
 	const stored = storedModelSelector(entries);
 	if (!stored) return false;
 	const current = ctx.models?.current?.() ?? ctx.model;
-	const parts = splitSelector(stored);
-	const renamed = parts ? LEGACY_DIRECT_NAMES[parts.provider] : undefined;
-	if (parts && renamed) {
-		const selector = `${renamed}/${parts.model}${parts.effort}`;
-		if (!ctx.models?.resolve?.(selector)) return false;
-		if (current?.provider === renamed && current.id === parts.model) return false;
-		const moved = await applyModelChange(pi, ctx, selector, snapshot.label);
-		if (moved) log.info(`session model ${stored} moved to ${selector} (renamed direct provider)`);
-		return moved;
-	}
 	if (!catalog) return false;
 	const mapped = mapSelector(stored, profileIds, catalog);
 	if (!mapped) return false;

@@ -24,10 +24,8 @@ own `--profile` flag is a different feature and is not the AGP server selector.
 
 A resumed conversation keeps its persisted environment, even when the process
 was launched with a different `AGP_PROFILE`. That is intentional: history never
-moves silently. Resume may restore the model recorded by the session when that
-provider was renamed (`cpa-codex` → `direct-cpa-codex`, `ds-local` →
-`direct-deepseek`) or when an old AGP namespace is still served by the selected
-environment.
+moves silently. Resume may restore the model recorded by the session when it
+still names an older AGP namespace that the selected environment serves.
 
 All gateway providers are explicitly namespaced: `agp-prod-codex`,
 `agp-test-codex`, `agp-test-opencode`, and so on. Their local model IDs remain
