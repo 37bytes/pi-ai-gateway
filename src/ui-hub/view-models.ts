@@ -10,7 +10,7 @@
 // maps to the model that gets toggled.
 
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { matchesKey } from "@oh-my-pi/pi-tui";
+import { matchesKey } from "../ui-compat.ts";
 
 import type { ProxyConfig } from "../config.ts";
 import type { Discovery } from "../fetch-models.ts";

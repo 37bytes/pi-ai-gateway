@@ -4,7 +4,7 @@
 // be copy-pasted across the picker, the read-only overlay, and the setup
 // wizard. Everything here is pure and ANSI-aware.
 
-import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { visibleWidth } from "../ui-compat.ts";
 
 import { pad } from "../ui-picker/render-text.ts";
 import type { Theme } from "../ui-picker/types.ts";

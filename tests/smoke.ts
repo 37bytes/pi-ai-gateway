@@ -4,6 +4,7 @@
 // Run: cd ~/Projects/pi-cliproxyapi && npx tsx tests/smoke.ts
 //   (or: node --experimental-strip-types --no-warnings tests/smoke.ts)
 
+import assert from "node:assert/strict";
 import cliproxyapi from "../index.ts";
 
 const registered: Array<{ name: string; api?: string; modelCount?: number }> =
@@ -66,5 +67,6 @@ const piMock = {
 
 await cliproxyapi(piMock as any);
 
+assert.deepEqual(commands, ["cliproxy", "cliproxy-setup", "cliproxy-profile"]);
 console.log("registered commands:", commands);
 console.log("registered providers:", registered);

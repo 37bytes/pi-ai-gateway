@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import { selectBbModels } from "../src/bb-models.ts";
+import type { Discovery } from "../src/fetch-models.ts";
+import type { ProxyConfig } from "../src/config.ts";
+const cfg: ProxyConfig = { proxy: { endpoint: "https://test.example/v1", apiKey: "synthetic" }, builtinProviders: {}, customProviders: {}, registerAll: true, discoveryExcludes: [], overrides: {}, refreshIntervalMinutes: 0, usageCacheTtlMs: 0 };
+const discovery: Discovery = { source: "well-known", upstreamVersion: null, builtinProviders: [], customPool: [{ id: "codex/current", selectorId: "current", name: "Current", suggestedProvider: "codex", api: "openai-responses", ownedBy: "fixture", metadataState: "catalog", priceState: "unknown" }], serverDiscoveryExcludes: [], upstreamTotal: 1 };
+const candidates = ["agp/codex/current", "agp/codex/removed", "codex/current", "codex/stale", "opencode/unrelated", "ds/direct"].map((id) => ({ id, name: id }));
+const native = { agp: { baseUrl: "https://prod.example/v1", models: [{ id: "codex/current" }, { id: "codex/removed" }] }, ds: { baseUrl: "https://direct.example/v1", models: [{ id: "direct" }] } };
+assert.deepEqual(selectBbModels(candidates, cfg, discovery, "test", native, ["https://prod.example", "https://test.example"]).map((model) => model.id), ["agp/codex/current", "ds/direct"]);
+assert.deepEqual(selectBbModels(candidates, cfg, discovery, "test", { ds: native.ds }, ["https://test.example"]).map((model) => model.id), ["codex/current", "ds/direct"]);
+assert.deepEqual(selectBbModels(candidates, cfg, { ...discovery, customPool: [] }, "test", native, ["https://prod.example"]).map((model) => model.id), ["ds/direct"]);
+console.log("BB catalog: active discovery, configured gateway alias, no duplicates, direct provider retained: passed");

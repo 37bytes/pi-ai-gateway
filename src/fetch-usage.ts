@@ -37,6 +37,12 @@ export type UsageSource = "plugin" | "sidecar";
 export interface UsageGroup {
 	id: string;
 	label: string;
+	/**
+	 * Actual window length reported by the server, in seconds. When present and
+	 * positive it is the only period evidence used: names such as `primary`,
+	 * `secondary` or `rolling` describe position/reset behavior, not duration.
+	 */
+	durationSeconds?: number | null;
 	remainingFraction?: number | null;
 	resetTime?: string | null;
 	models?: string[];

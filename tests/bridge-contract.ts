@@ -17,6 +17,7 @@ const { fetchDiscovery } = await import("../src/fetch-models.ts");
 const { clearUsageCache, fetchUsage, lastUsageContract, lastUsageSource } = await import(
 	"../src/fetch-usage.ts"
 );
+const { profilePaths } = await import("../src/profiles.ts");
 
 const cfg = {
 	proxy: {
@@ -97,7 +98,7 @@ try {
 		}
 		throw new Error(`unexpected discovery request: ${call.path}`);
 	});
-	const viaBridge = await fetchDiscovery(cfg, "gateway-key");
+	const viaBridge = await fetchDiscovery(cfg, "gateway-key", profilePaths("prod"));
 	assert.equal(viaBridge.source, "well-known");
 	assert.deepEqual(
 		calls.map((call) => call.path),
@@ -115,7 +116,7 @@ try {
 		}
 		throw new Error(`unexpected discovery fallback request: ${call.path}`);
 	});
-	const fallback = await fetchDiscovery(cfg, "gateway-key");
+	const fallback = await fetchDiscovery(cfg, "gateway-key", profilePaths("prod"));
 	assert.equal(fallback.source, "v1-models");
 	assert.deepEqual(
 		calls.map((call) => call.path),
@@ -154,6 +155,64 @@ try {
 	assert.equal(calls[1]?.headers.get("x-pi-contract"), "2");
 	assert.equal(lastUsageSource(), "plugin");
 	assert.equal(lastUsageContract(), 2);
+
+	// A duration reported by the plugin for an ordinary API-key session must
+	// survive parsing and decide the period; the name `primary` is not hourly.
+	const timedUsage = {
+		...usageDocument,
+		accounts: [
+			{
+				provider: "codex",
+				providerId: "provider-timed",
+				scope: "provider_subscription",
+				account: "opaque-timed",
+				authIndex: "opaque-timed",
+				label: "Subscription",
+				status: "active",
+				disabled: false,
+				unavailable: false,
+				success: 0,
+				failed: 0,
+				lastRequestAt: null,
+				supported: true,
+				groups: [
+					{
+						id: "primary",
+						label: "primary",
+						durationSeconds: 604_800,
+						state: "supported",
+						remainingFraction: 0.4,
+					},
+				],
+			},
+		],
+	};
+	calls = installFetch((call) => {
+		if (call.path === "/v0/resource/plugins/pi-bridge/capabilities") {
+			return json({
+				schemaVersion: 1,
+				plugin: "pi-bridge",
+				contract: 2,
+				latestContract: 2,
+				endpoints: { usage: "/usage" },
+			});
+		}
+		if (call.path === "/v0/resource/plugins/pi-bridge/usage") {
+			return json(timedUsage, 200, { "X-Pi-Contract": "2" });
+		}
+		throw new Error(`unexpected timed usage request: ${call.path}`);
+	});
+	const fetchedTimed = await fetchUsage(cfg, "legacy-key", { force: true });
+	assert.equal(fetchedTimed.accounts[0]?.groups?.[0]?.durationSeconds, 604_800);
+	assert.match(
+		renderQuotaSegment(
+			fetchedTimed,
+			{ providerId: "provider-timed" },
+			{ fg: (_color, text) => text },
+		)!,
+		/\ud83d\uddd3.*40/,
+		"a 604800s primary window renders as weekly, never hourly",
+	);
 
 	const legacyAccount = {
 		provider: "codex",
@@ -195,7 +254,7 @@ try {
 		throw new Error(`unexpected legacy usage request: ${call.path}`);
 	});
 	const legacyDoc = await fetchUsage(cfg, "legacy-key", { force: true });
-	assert.match(renderQuotaSegment(legacyDoc, { providerKind: "codex" }, quotaTheme)!, /5h .* 40/);
+	assert.match(renderQuotaSegment(legacyDoc, { providerKind: "codex" }, quotaTheme)!, /\u23f1 .* 40/);
 	assert.deepEqual(
 		calls.map((call) => call.path),
 		[

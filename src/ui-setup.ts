@@ -1,5 +1,6 @@
 // First-run setup wizard: collects endpoint + apiKey + providerPrefix
-// and writes them to ~/.pi/agent/ai-gateway/config.json.
+// and writes them to the ACTIVE profile's config
+// (~/.pi/agent/ai-gateway/profiles/<id>/config.json), 0600.
 //
 // All three fields support the same "!cmd" / "$ENV" / literal semantics as
 // the rest of the config (see resolveConfigValue). For convenience the wizard
@@ -9,9 +10,11 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { type Component, getKeybindings, Input, matchesKey } from "@oh-my-pi/pi-tui";
+import * as tuiLegacy from "@oh-my-pi/pi-tui";
+import { cancelKey, matchesKey } from "./ui-compat.ts";
 
-import { CONFIG_PATH, loadConfig, resolveConfigValue, saveConfig } from "./config.ts";
+import { loadConfig, resolveConfigValue, saveConfig } from "./config.ts";
+import { profilePaths } from "./profiles.ts";
 import { frame, frameInner } from "./ui-frame.ts";
 
 interface Theme {
@@ -55,22 +58,35 @@ const STEPS: WizardStep[] = [
 	},
 ];
 
+export interface SetupOptions {
+	/** Environment whose config file the wizard edits. */
+	profileId: string;
+	/** Re-prompt every field instead of only the missing ones. */
+	forceAll?: boolean;
+}
+
 /**
- * Run the interactive setup wizard if no usable config exists.
- * Returns true when config was just saved (caller should reapply).
+ * Run the interactive setup wizard if the given environment has no usable
+ * config. Returns true when config was just saved (caller should reapply).
  */
-export async function runSetupIfNeeded(ctx: ExtensionCommandContext): Promise<boolean> {
-	const cfg = loadConfig();
+export async function runSetupIfNeeded(
+	ctx: ExtensionCommandContext,
+	profileId: string,
+): Promise<boolean> {
+	const cfg = loadConfig(profileId);
 	const hasEndpoint = Boolean(cfg.proxy.endpoint);
 	const hasResolvedKey = Boolean(resolveConfigValue(cfg.proxy.apiKey));
 	if (hasEndpoint && hasResolvedKey) return false;
 	if (!ctx.hasUI) return false;
-	return runSetup(ctx, /*forceAll=*/ true);
+	return runSetup(ctx, { profileId, forceAll: true });
 }
 
 /** Force-show the wizard from /cliproxy-setup regardless of current config. */
-export async function runSetup(ctx: ExtensionCommandContext, forceAll = false): Promise<boolean> {
-	const existing = loadConfig();
+export async function runSetup(ctx: ExtensionCommandContext, opts: SetupOptions): Promise<boolean> {
+	const profile = opts.profileId;
+	const forceAll = opts.forceAll === true;
+	const paths = profilePaths(profile);
+	const existing = loadConfig(profile, paths);
 	const values: Record<string, string> = {
 		endpoint: existing.proxy.endpoint ?? "",
 		apiKey: existing.proxy.apiKey ?? "",
@@ -116,8 +132,8 @@ export async function runSetup(ctx: ExtensionCommandContext, forceAll = false): 
 		providerPrefix: values.providerPrefix ?? "",
 	};
 
-	saveConfig(next);
-	ctx.ui.notify(`saved to ${CONFIG_PATH}`, "info");
+	saveConfig(profile, next, paths);
+	ctx.ui.notify(`saved the ${profile.toUpperCase()} environment to ${paths.configPath}`, "info");
 	return true;
 }
 
@@ -140,14 +156,33 @@ async function promptStep(
 	step: WizardStep,
 	prefill: string,
 ): Promise<string | undefined> {
+	if (typeof tuiLegacy.Input !== "function") {
+		const secret = step.label === "apiKey";
+		let title = `Setup: ${step.label}\n${step.hint}`;
+		const secretOptions = { secret: true } as Parameters<typeof ctx.ui.input>[2];
+		let draft = prefill;
+		for (;;) {
+			const raw = secret
+				? await ctx.ui.input(title, prefill ? "Leave blank to keep the current key" : undefined, secretOptions)
+				: await ctx.ui.editor(title, draft);
+			if (raw === undefined) return undefined;
+			const value = raw.trim() || (secret ? prefill : "");
+			if (!secret) draft = raw;
+			const error = !value && step.required ? "required field"
+				: value && !value.startsWith("!") && !value.startsWith("$") ? step.validate?.(value) : undefined;
+			if (!error) return value;
+			title = `Setup: ${step.label}\n${error}. ${step.hint}`;
+		}
+	}
 	return ctx.ui.custom<string | undefined>(
-		(tui, theme, _kb, done) =>
+		(tui, theme, kb, done) =>
 			buildStepOverlay(
 				tui as unknown as {
 					requestRender(): void;
 					rows?: number;
 					cols?: number;
 				},
+				kb,
 				theme as unknown as Theme,
 				step,
 				prefill,
@@ -159,12 +194,14 @@ async function promptStep(
 
 function buildStepOverlay(
 	tui: { requestRender(): void; rows?: number; cols?: number },
+	kb: Parameters<typeof cancelKey>[0],
 	theme: Theme,
 	step: WizardStep,
 	prefill: string,
 	done: (v: string | undefined) => void,
-): Component & { handleInput(data: string): void } {
-	const input = new Input();
+): tuiLegacy.Component & { handleInput(data: string): void } {
+	const input = new tuiLegacy.Input();
+	input.mask = step.label === "apiKey";
 	input.setValue(prefill);
 	input.focused = true;
 	let error: string | null = null;
@@ -221,8 +258,7 @@ function buildStepOverlay(
 			input.invalidate();
 		},
 		handleInput(data: string): void {
-			const kb = getKeybindings();
-			if (kb.matches(data, "tui.select.cancel") || matchesKey(data, "escape")) {
+			if (cancelKey(kb, data) || matchesKey(data, "escape")) {
 				done(undefined);
 				return;
 			}

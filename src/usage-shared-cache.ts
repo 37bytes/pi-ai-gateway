@@ -1,5 +1,8 @@
-// File-based shared cache for /api/usage — multiple Pi instances read the same
-// file, and a file lock prevents thundering-herd fetches.
+// File-based shared cache for /api/usage — multiple Pi instances on the SAME
+// profile read the same file, and a file lock prevents thundering-herd fetches.
+//
+// Each profile owns its own cache and lock file, so a prod instance can neither
+// serve quota to, nor block a fetch for, a test instance.
 //
 // Flow (per Pi instance):
 //   1. readUsageCache() → { doc, ageMs } | null
@@ -11,22 +14,11 @@
 // Lock: O_EXCL create (atomic on POSIX). Contains pid + timestamp. Stale locks
 // (older than LOCK_STALE_MS) are removed to recover from crashed processes.
 
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	statSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { join } from "node:path";
-
-import { CONFIG_DIR } from "./config.ts";
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import type { UsageDocument } from "./fetch-usage.ts";
 import { log } from "./log.ts";
-
-export const USAGE_CACHE_PATH = join(CONFIG_DIR, "usage-cache.json");
-export const USAGE_LOCK_PATH = join(CONFIG_DIR, "usage-cache.lock");
+import type { ProfilePaths } from "./profiles.ts";
+import { ensureDir, writePrivateFileAtomic } from "./profiles.ts";
 
 /**
  * Minimum interval between network fetches, shared across all Pi instances.
@@ -51,13 +43,11 @@ export interface CachedUsage {
 	ageMs: number;
 }
 
-/** Read the shared cache file. Returns null if missing/corrupt. */
-export function readUsageCache(scope: string): CachedUsage | null {
-	if (!existsSync(USAGE_CACHE_PATH)) return null;
+/** Read one profile's shared cache file. Returns null if missing/corrupt. */
+export function readUsageCache(paths: ProfilePaths, scope: string): CachedUsage | null {
+	if (!existsSync(paths.usageCachePath)) return null;
 	try {
-		const env = JSON.parse(
-			readFileSync(USAGE_CACHE_PATH, "utf8"),
-		) as CacheEnvelope;
+		const env = JSON.parse(readFileSync(paths.usageCachePath, "utf8")) as CacheEnvelope;
 		if (
 			!env ||
 			env.scope !== scope ||
@@ -79,12 +69,12 @@ export function isUsageFresh(ageMs: number): boolean {
 	return Number.isFinite(ageMs) && ageMs >= 0 && ageMs < USAGE_CACHE_TTL_MS;
 }
 
-/** Write fresh usage data + timestamp to the shared cache file. */
-export function writeUsageCache(doc: UsageDocument, scope: string): void {
+/** Write fresh usage data + timestamp to one profile's shared cache file. */
+export function writeUsageCache(paths: ProfilePaths, doc: UsageDocument, scope: string): void {
 	try {
-		mkdirSync(CONFIG_DIR, { recursive: true });
+		ensureDir(paths.dir);
 		const env: CacheEnvelope = { fetchedAt: Date.now(), scope, doc };
-		writeFileSync(USAGE_CACHE_PATH, JSON.stringify(env), { encoding: "utf8", mode: 0o600 });
+		writePrivateFileAtomic(paths.usageCachePath, JSON.stringify(env));
 	} catch (err) {
 		log.warn("failed to write usage cache:", (err as Error).message);
 	}
@@ -97,15 +87,15 @@ export function writeUsageCache(doc: UsageDocument, scope: string): void {
  * The token must be passed to {@link releaseUsageLock} so we only remove a
  * lock we still own.
  */
-export function tryAcquireUsageLock(): string | null {
+export function tryAcquireUsageLock(paths: ProfilePaths): string | null {
 	const token = `${process.pid}@${Date.now()}`;
 	// Clean up stale lock from a crashed process
-	if (existsSync(USAGE_LOCK_PATH)) {
+	if (existsSync(paths.usageLockPath)) {
 		try {
-			const stat = statSync(USAGE_LOCK_PATH);
+			const stat = statSync(paths.usageLockPath);
 			if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
 				log.debug("removing stale usage lock");
-				unlinkSync(USAGE_LOCK_PATH);
+				unlinkSync(paths.usageLockPath);
 			} else {
 				return null; // someone else holds a live lock
 			}
@@ -116,7 +106,8 @@ export function tryAcquireUsageLock(): string | null {
 	}
 	// O_EXCL ("wx") — atomically creates only if the file does not exist
 	try {
-		writeFileSync(USAGE_LOCK_PATH, token, { flag: "wx" });
+		ensureDir(paths.dir);
+		writeFileSync(paths.usageLockPath, token, { flag: "wx", mode: 0o600 });
 		return token;
 	} catch {
 		// race: another instance created the lock between our check and create
@@ -124,13 +115,13 @@ export function tryAcquireUsageLock(): string | null {
 	}
 }
 
-export function releaseUsageLock(ourToken: string): boolean {
+export function releaseUsageLock(paths: ProfilePaths, ourToken: string): boolean {
 	try {
-		const content = readFileSync(USAGE_LOCK_PATH, "utf8").trim();
+		const content = readFileSync(paths.usageLockPath, "utf8").trim();
 		// Only remove the lock if it still belongs to us. If another process
 		// acquired it after our stale-cleanup, leave it alone.
 		if (content === ourToken) {
-			unlinkSync(USAGE_LOCK_PATH);
+			unlinkSync(paths.usageLockPath);
 			return true;
 		}
 		return false;

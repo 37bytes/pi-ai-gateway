@@ -3,18 +3,116 @@
 [![GitHub](https://img.shields.io/github/license/37bytes/pi-ai-gateway)](https://github.com/37bytes/pi-ai-gateway)
 
 Pi extension for **AI Gateway Platform** model discovery, routing, and quota
-visibility. One AGP endpoint and one ordinary LLM key configure every provider
-and model exposed to the caller.
+visibility. Each named environment profile has its own AGP endpoint, ordinary
+LLM key, model configuration and caches. A conversation stays on its selected
+profile; another process can use a different environment simultaneously.
+
+Image routes keep their native OMP model definition under the existing gateway provider:
+set the model's `kind: image`, `api: openai-images` and image role there. Mirror
+`kind`/`api` in the profile's matching model override so discovery never registers it
+through the chat bridge. The plugin preserves those fields when saving configuration.
+Do not name a gateway-only image provider `openai`: that enables OMP's bundled OpenAI
+catalog rather than restricting it to the configured image route.
+
+BB's AGP usage card reads profiles and quota through `src/bb-usage.ts` on the
+selected machine. This strict read-only entry never runs profile migration or
+repairs missing configuration; resolved credentials stay local. In ACP sessions
+carrying `BB_THREAD_ID`, an owner-checked private Unix socket exposes only profile
+state/model names and the existing idle transactional keep-history switch. It is
+part of the OMP process, not a separate daemon. Existing processes need a normal
+runtime restart to load new extension code; no active conversation is restarted
+by installation. Reset requests revalidate the exact source configuration revision
+and are never retried automatically.
+
+
+
+## Production and test profiles
+
+The built-in profile names are `prod` and `test`. The first migration keeps the
+existing endpoint in `prod`; changing `profiles.json.defaultProfile` changes
+only the default for new conversations. A saved conversation retains its
+environment, even when resumed from a differently configured process. An
+unknown explicit profile fails closed instead of falling back to production.
+
+Use one `omp`. A new conversation starts on the registry default (`test`), and
+`/cliproxy-profile prod|test` switches the current session to another
+environment by starting a new conversation; the previous one stays saved on its
+own server. For scripts, headless runs and a second concurrent process, select
+the process profile with `AGP_PROFILE=prod omp` (or `--agp-profile prod`). OMP's
+own `--profile` flag is a different feature and is not the AGP server selector.
+
+A resumed conversation keeps its persisted environment, even when the process
+was launched with a different `AGP_PROFILE`. That is intentional: history never
+moves silently. Resume may restore the model recorded by the session when it
+still names an older AGP namespace that the selected environment serves.
+
+Gateway providers keep the server's own plain names: `codex`, `opencode`,
+`deepseek`, built-in names, and local groups. Their model IDs are unchanged, so
+`codex/gpt-6-astra` is both the local selector and the exact server wire ID.
+Direct providers keep their historical names (`cpa-codex`, `ds-local`) and are
+not renamed, removed or used as automatic fallbacks by this extension.
+
+One process serves one environment: a new conversation uses the registry default
+(`test`) or `AGP_PROFILE`, and a resumed conversation uses the environment saved
+in its own session file. Switching inside a session re-registers the same plain
+provider names against the target environment, so the model menu never shows
+both environments at once.
+
+`/cliproxy-profile` reports the current environment and origin.
+`/cliproxy-profile test` or `prod` asks to start a **new conversation** on that
+environment; the previous conversation remains saved on its original server.
+`--keep-history` deliberately moves the current conversation after confirmation.
+A streaming turn must finish or be explicitly cancelled before a switch.
+Unavailable target discovery/model authority refuses the transition rather
+than silently sending the next turn to the previous server.
+A stable model selector can still hold another environment's transport object.
+A switch reselects that model when the gateway API or full base URL differs; a host refusal restores the old environment rather than leaving a new label on the old route.
+
+The unified chat selector `agp/codex/gpt-6-astra` keeps its provider and wire ID
+when switching profiles. Its selected model receives the target route's guarded
+transport, without replacing the native `agp` provider or its image models.
+Profile switches verify the target route, API and endpoint before committing;
+an unavailable route or stale resolver refuses the switch. Direct `ds` models
+are not rebound.
+
+For an AGP + direct DeepSeek picker, use OMP's native `enabledModels` setting with
+`["agp/**", "ds/*"]`. The recursive glob is required for nested gateway route IDs.
+This scopes ACP selection without a BB interceptor or a dependency on an existing
+conversation. Internal route providers remain registered
+for transport and existing selectors. Already-running processes must restart
+normally to load extension changes; installation never interrupts a live turn.
+
+
+The footer shows one compact row: a green test/red production dot followed by
+the selected provider's quota windows. The hub retains the environment and
+origin. Configuration, discovery/usage cache files and cross-process locks are per profile;
+asynchronous work is gated by the originating session and generation. Model
+roles preserve their selected model, effort and service-tier settings while
+resolving against the active profile's real catalogue. Missing models are not
+invented. Older live child sessions keep their own environment when a parent
+changes its conversation; finished sessions release their registrations.
+
+`scripts/switch.sh dev|prod` still selects **plugin code source** (checkout or
+package). It does not select an AGP server.
 
 ## Quota in the status line
 
-The footer shows how much of each provider window is left for the model you are
-currently using, so a limit is visible before it bites rather than after:
+The contour dot and quota windows share one footer status entry, without a
+separate environment line, URL or redundant gauge. For example, a Codex account
+with a weekly limit is shown as:
 
 ```text
-claude-sonnet-5   󰘧 5h ⣶ 69 7d ⣷ 81
-claude-fable-5    󰘧 5h ⣶ 69 7d ⣷ 81 Fable ⣾ 91
+● 🗓 ⣷ 81
 ```
+
+The optional `durationSeconds` field is the authoritative window length. A
+604800-second `primary` window is weekly; an 18000-second `secondary` window is
+short/hourly and sorts first. Primary/secondary/rolling describe slots or reset
+behavior, not durations. A reset deadline is not a window length either.
+Explicit legacy labels such as `5h`, `7d`, `weekly` and `monthly` remain usable
+only when no numeric duration was supplied. Invalid or unknown periods use
+`•`, not a guessed hour/week. Windows sort by their actual duration; different
+durations with the same slot name stay separate.
 
 Windows are read live, not guessed. Anthropic caps some models against a slice
 of the weekly pool — Fable may draw down half of it, and draws faster than other
@@ -30,8 +128,9 @@ measurements say `unknown` or `stale`; they never become zero-percent quota.
 The footer shows available provider capacity (the most headroom among eligible
 accounts), not a promise about the affinity-selected account or a personal
 entitlement. Different periods and model-specific windows are never summed.
-Monthly, subscription, and other server-defined windows retain their actual
-labels and independent percentages; they are not relabeled as 5h or 7d.
+Other server-defined windows retain their independent percentages. Their full
+labels remain in Usage; the compact footer uses period symbols, never an
+invented 5h or 7d label.
 Native quota freshness is evaluated for the selected connector and model:
 a stale observation for another provider/model does not hide fresh capacity.
 Expired client-cache fallbacks and passed valid reset timestamps are marked
@@ -80,12 +179,13 @@ with local heuristics, and the quota display is absent.
 
 ## Commands
 
-Two commands; everything else lives inside the hub as tabs and actions.
+Profile selection is separate from the model/usage hub.
 
 | Command | Description |
 | --- | --- |
 | `/cliproxy` | Hub overlay — **Models** / **Usage** / **Diagnostics** tabs plus global actions |
 | `/cliproxy-setup` | Configure endpoint, API key, provider prefix |
+| `/cliproxy-profile [prod\|test] [--keep-history]` | Show or explicitly change this conversation's environment |
 
 ### The `/cliproxy` hub
 
@@ -108,39 +208,55 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 You need an AI Gateway Platform endpoint with the OMP compatibility façade
 enabled and an ordinary AGP LLM key authorized for the required models.
 
-Use standard OMP 18.2.0 with the pinned public `@oh-my-pi` SDK and catalog
-dependencies. No patched host or custom capability marker is required. Bun
-1.3.14 or newer is required for development checks.
+The extension supports OMP 19.1.1 and 19.2.0. OMP 19.2 uses the new host TUI
+for overlays and setup, including masked credential entry. Public SDK/catalog
+dependencies stay pinned to 18.2.0 for older hosts. Development checks require
+Bun 1.3.14 or newer; the OMP 19.2 npm host requires Bun 1.4.4 or newer.
 Gateway credentials remain private to the guarded final HTTP fetch; they are
 never registered as provider-wide host API keys.
 
 The extension uses OMP's supported `fetchDynamicModels` registration to own
-canonical namespaces (`deepseek`, `opencode`, `codex`). Static registration alone
-does not suppress built-in discovery on stock OMP and can incorrectly recreate
-`deepseek/opencode/...` selectors. After upgrading from such a configuration,
-back up and remove only the polluted `model_cache` row for `deepseek` from
-`~/.omp/agent/models.db`, then restart OMP. Do not disable the entire provider.
+its provider namespaces. Static registration alone does not
+suppress built-in discovery on stock OMP. Keep the gateway's wire identity
+separate from the local provider label; do not recreate nested selectors such
+as `deepseek/opencode/...` through unrelated builtin providers.
 
-Choose `opencode/deepseek-v4.1-flash`, not
-`deepseek/opencode/deepseek-v4.1-flash`. The exact upstream wire ID remains
-`opencode/deepseek-v4.1-flash`. Both `x-session-id` and `x-opencode-session` are
-derived from the actual conversation ID. Explicit request headers take precedence
-over model headers; explicit model headers take precedence over that default.
+For example, choose `opencode/deepseek-v4.1-flash`. The exact upstream
+wire ID remains `opencode/deepseek-v4.1-flash`. Both `x-session-id` and
+`x-opencode-session` derive from the actual conversation ID. Explicit request
+headers take precedence over model headers, and explicit model headers take
+precedence over that default.
 
 ## Install
 
 ```bash
-pi install github:37bytes/pi-ai-gateway
+omp plugin install github:37bytes/pi-ai-gateway#v0.4.3-agp.19
 ```
 
 Then run `/cliproxy-setup` to configure the AGP endpoint. The legacy command
 name is intentionally retained so existing OMP workflows keep working.
 
+OMP's plugin manager can install a pinned revision with
+`omp plugin install github:37bytes/pi-ai-gateway#<commit>`. Configure both
+profile files before selecting test, and switch its default only after the
+test server passes a real inference check. Restart existing processes after
+installing new plugin code; changing one conversation's profile is not a
+global plugin-code reload.
+
 If the host rejects a discovery (an entry the extension cannot route), the
 cached copy is dropped and fetched again: a stale cache can no longer pin a
 broken catalog across restarts.
 
-### Taskflow child agents
+### Child agents
+
+OMP 18.x inherits extension resources automatically. The profile runtime binds
+in-process children to their actual selected AGP model/environment and keeps
+that binding stable. A child with an indeterminate origin fails closed; it is
+not assigned the process's launch default. Headless processes use their own
+profile's warm discovery cache without starting discovery/usage polling.
+
+The following allowlist is only for other Pi installations using the separate
+taskflow extension, not an OMP 18.x setting:
 
 Taskflow starts children with an extension allowlist, so add this package's entrypoint
 there as well; otherwise the child cannot register the proxy-backed model catalog.
@@ -162,20 +278,52 @@ For a normal npm installation:
 Use a real **absolute** path: taskflow does not expand `~`, so replace
 `/Users/your-user` with your home directory. Preserve any existing allowlisted
 extensions (such as taskflow's path guard and MCP adapter). For a local checkout, use
-its absolute `index.ts` path instead. A child running in JSON/print mode reads the
-discovery cache and registers providers without discovery, usage, command, status, or
-timer work. Start Pi once interactively after configuring the proxy to populate that
-cache.
+its absolute `index.ts` path instead. A child in JSON/print mode uses the
+profile-scoped discovery cache, with environment-binding hooks but no
+interactive commands or timers. Warm each configured profile once before
+starting cache-only children.
 
 ## Config
 
-`~/.pi/agent/ai-gateway/config.json` — created by `/cliproxy-setup`, editable
-by hand. On first run, AI Gateway imports
-`~/.pi/agent/pi-cliproxyapi/config.json` from the upstream v0.4.3 package. An
-installed package moves that source config; a local checkout copies it. If the
-upstream config does not exist, the older
-`~/.config/pi-cliproxyapi/config.json` location is migrated with the same
-copy-versus-move behavior.
+`~/.pi/agent/ai-gateway/profiles.json` contains `schemaVersion: 1`,
+`defaultProfile`, and the profile descriptors. Each
+`~/.pi/agent/ai-gateway/profiles/<id>/config.json` contains the configuration
+below and is edited by `/cliproxy-setup` for that session's profile. The same
+directory holds `discovery-cache.json`, `usage-cache.json`, `usage-cache.lock`
+and the generated OMP role overlay. Owned directories are `0700`; configs and
+caches are written atomically with `0600` permissions.
+
+A descriptor may carry an optional one-time replacement boundary:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "defaultProfile": "prod",
+  "profiles": {
+    "prod": { "label": "PROD" },
+    "test": { "label": "TEST", "bindingIncarnation": "agp3-20261111" }
+  }
+}
+```
+
+Every new session binding records its profile, the endpoint `origin` and that
+`bindingIncarnation`. When a descriptor declares one, a resumed conversation
+whose newest binding has a different origin or no matching incarnation is
+refused at session binding. Any factory-time launch-seed transport is revoked,
+and every inference checks its live session authority before dispatch. Startup
+metadata may already have loaded the launch seed; no conversation is sent on it.
+The explicit remedy is a new conversation (`/cliproxy-profile <id>`) or deliberately moving
+this one (`/cliproxy-profile <id> --keep-history`). Profiles without the field
+(`prod`) keep historical bindings valid. Set it once, when a profile's endpoint
+is repurposed, and never rewrite conversation history: the guard reads only the
+binding entries and appends a new one on an explicit move.
+
+On upgrade, the old single `ai-gateway/config.json` and scope-matching caches
+move once into `profiles/prod`; caches for another endpoint/key are not adopted.
+Upstream `~/.pi/agent/pi-cliproxyapi/config.json` and the older
+`~/.config/pi-cliproxyapi/config.json` remain migration inputs, never a second
+active authority. Upgrade all plugin installations sharing this state together;
+an old single-endpoint reader must not keep using the migrated layout.
 
 ```jsonc
 {
@@ -207,15 +355,15 @@ to `true` to register **every** provider and model the gateway serves on each
 refresh:
 
 - every built-in provider with its discovered models, and
-- every connector-backed custom-pool group under the exact configured server
-  namespace (`codex`, for example). Legacy display-only group names are
-  slugified (`ChatGPT Web` → `chatgpt-web`).
+- every connector-backed custom-pool group under its server namespace
+  (`codex`, `opencode`, for example).
+  Legacy display-only group names are slugified inside that environment.
 
 New models appear without a config edit. Matching explicit model settings are
 preserved, as are unrelated custom provider definitions. The Models tab remains
-read-only in this mode. `providerPrefix` applies only to legacy discovery; it
-does not turn a server namespace `codex` into `cpa-codex`. Changing this option
-does not rewrite existing OMP roles or unrelated custom providers.
+read-only in this mode. `providerPrefix` affects only legacy discovery; plain
+server names are used. Role mapping is session-local; unrelated direct/local
+roles are kept.
 
 After a successful refresh, providers previously registered by this extension
 but absent from the current catalog/configuration are unregistered in the same
@@ -224,8 +372,8 @@ other extensions are not removed.
 
 ### Model identity and metadata
 
-For server route `codex/gpt-6-astra`, OMP registers provider `codex` and local
-model ID `gpt-6-astra`, so the selector is displayed exactly once. Chat
+For server route `codex/gpt-6-astra`, the test profile registers provider
+`codex` and local model ID `gpt-6-astra`. Chat
 Completions, Responses, and Messages requests always carry the server's exact
 `wireId`, even after an application payload hook. Session headers, cancellation,
 and non-transport stream options are preserved. A missing `x-session-id` is
@@ -242,6 +390,13 @@ final fetch. Native SDK preparation and host request-debug wrappers never receiv
 that key. Restart OMP after upgrading from a release that registered real keys,
 so old in-memory provider/model snapshots cannot survive the cutover.
 
+An explicit connector-group API configuration may select the transport family
+when a generic relay advertises another one, for example
+`"customProviders": { "codex": { "api": "openai-responses", "models": [] } }`
+with `registerAll: true`. It changes only the protocol delegate, never the
+server wire ID or credential target. Conflicting discovered families without
+an explicit operator configuration remain an error.
+
 Stock OMP can repopulate built-in provider names during native catalog refresh.
 The marker prevents those paths receiving an AGP key, but it does not make
 native catalog ownership authoritative. Do not interpret a same-named first-party
@@ -256,9 +411,16 @@ missing components stay absent in discovery/configuration. `metadataState` is
 `catalog`, `override`, or `unknown`; `priceState` is `known`, `partial`, or
 `unknown`. The plugin labels incomplete model names with `context unknown`,
 `output limit unknown`, `price unknown`, or `price partial` as applicable.
-Stock OMP may still fill numeric runtime defaults in its own model cards; those
-are not discovered gateway limits or confirmed free prices. Selecting a model in
-the plugin picker does not freeze capacities/prices into manual overrides.
+
+Registrations opt into OMP's authoritative model metadata contract:
+`metadataAuthoritative: true`, explicit `null` limits, the discovered
+`pricingStatus` (`unknown` for a partial/unknown card, `free` only for a
+complete four-leg zero card), and the missing cost legs the host must not
+invent. A matching host preserves the unknown limits and partial prices instead
+of filling catalog/reference defaults. Hosts without that contract cannot be
+used for this profile: use the source-bound OMP build carrying the AGP-3
+metadata fix. Selecting a model in the plugin picker does not freeze
+capacities/prices into manual overrides.
 
 ### Opt-in request latency diagnostics
 
@@ -336,8 +498,13 @@ sidecar, and `/v1/models` remains the discovery fallback.
 ```
 index.ts            ExtensionFactory entry point
 src/
-  config.ts         ~/.pi/agent/ai-gateway/config.json
-  commands.ts       2 slash commands (hub + setup)
+  profiles.ts       registry and private per-profile layout
+  profile-context.ts  explicit/persisted profile resolution
+  session-runtime.ts  binding, generations, provider ownership and switching
+  session-model.ts  model alignment while preserving effort/service tiers
+  role-map.ts       catalogue-validated per-profile role mapping
+  config.ts         profiles/<id>/config.json
+  commands.ts       hub, setup and profile selection
   apply.ts          pi.registerProvider calls
   fetch-models.ts   catalogue from pi-bridge, /v1/models fallback
   fetch-usage.ts    quota from pi-bridge, sidecar fallback, TTL cache
@@ -368,12 +535,21 @@ src/
 
 ## Release acceptance
 
-Version `0.4.3-agp.8` targets the official OMP 18.2.0 runtime. Publishing and
-installation are separate operator steps; installations should pin the full Git
-commit. `npm test` starts every contract in a separate, credential-free temporary
-HOME before loading Bun or production modules. It covers all three supported
-HTTP/SSE families, metadata precedence, cache authority, quota freshness,
-cancellation, producer rejection, and headless registration.
+This source stand is a reviewable candidate, not an installed or published
+release: nothing here changes the running OMP/plugin installation. Its
+`package.json` version stays the imported installed base until the owner cuts a
+release; commits are pinned by full SHA.
+
+Version `0.4.3-agp.11` added session-bound server profiles. Publishing and
+installation are separate operator steps; installations should pin the full
+Git commit. `npm test` uses credential-free temporary homes and covers profile
+migration, namespace/credential boundaries, cache isolation, async generations,
+child origin, transactional switching and model metadata/transport contracts.
+The source-bound AGP-3 additions cover authoritative metadata registration and
+the explicit profile replacement boundary. The actual OMP lifecycle smoke
+additionally exercises concurrent prod/test processes, a confirmed
+new-conversation switch, inactive-provider cleanup, and resuming the original
+conversation on its original server.
 
 Run `npm run check:installed-host` against the actual installed OMP binary.
 This local-only fixture runs two real conversations against a warm cache,

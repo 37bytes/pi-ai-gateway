@@ -1,7 +1,8 @@
 // "+ new custom group" prompt overlay.
 
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { type Component, getKeybindings, Input, matchesKey } from "@oh-my-pi/pi-tui";
+import * as tuiLegacy from "@oh-my-pi/pi-tui";
+import { cancelKey, matchesKey } from "../ui-compat.ts";
 
 import { withProviderPrefix } from "../compat.ts";
 import { frame, frameInner } from "../ui-frame.ts";
@@ -12,10 +13,22 @@ export async function promptNewProviderName(
 	prefix: string | undefined,
 ): Promise<string | null> {
 	const suggestion = withProviderPrefix(prefix, "group");
+	if (typeof tuiLegacy.Input !== "function") {
+		let candidate = suggestion;
+		let title = "New custom group";
+		for (;;) {
+			const value = await ctx.ui.editor(title, candidate);
+			if (value === undefined) return null;
+			candidate = value.trim();
+			if (/^[a-z0-9][a-z0-9._-]*$/i.test(candidate)) return candidate;
+			title = "New custom group — letters / digits / dot / dash / underscore only";
+		}
+	}
 	return ctx.ui.custom<string | null>(
-		(tui, theme, _kb, done) =>
+		(tui, theme, kb, done) =>
 			buildNamePrompt(
 				tui as unknown as { requestRender(): void },
+				kb,
 				theme as unknown as Theme,
 				suggestion,
 				done,
@@ -26,11 +39,12 @@ export async function promptNewProviderName(
 
 function buildNamePrompt(
 	tui: { requestRender(): void },
+	kb: Parameters<typeof cancelKey>[0],
 	theme: Theme,
 	suggestion: string,
 	done: (v: string | null) => void,
-): Component & { handleInput(data: string): void } {
-	const input = new Input();
+): tuiLegacy.Component & { handleInput(data: string): void } {
+	const input = new tuiLegacy.Input();
 	if (suggestion) input.setValue(suggestion);
 	input.focused = true;
 	let error: string | null = null;
@@ -72,8 +86,7 @@ function buildNamePrompt(
 			input.invalidate();
 		},
 		handleInput(data: string): void {
-			const kb = getKeybindings();
-			if (kb.matches(data, "tui.select.cancel") || matchesKey(data, "escape")) {
+			if (cancelKey(kb, data) || matchesKey(data, "escape")) {
 				done(null);
 				return;
 			}
