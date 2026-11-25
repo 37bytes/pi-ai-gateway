@@ -2,7 +2,7 @@
 // Built synchronously from the config + the discovery already fetched by the
 // hub, plus a read-only conflict scan.
 
-import { matchesKey } from "@oh-my-pi/pi-tui";
+import { matchesKey } from "../ui-compat.ts";
 
 import type { ProxyConfig } from "../config.ts";
 import { resolveConfigValue } from "../config.ts";

@@ -6,7 +6,7 @@
 //   per-view keys: see each view's footerHint()
 
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { type Component, getKeybindings, matchesKey } from "@oh-my-pi/pi-tui";
+import { cancelKey, matchesKey } from "../ui-compat.ts";
 
 import type { ProxyConfig } from "../config.ts";
 import { resolveConfigValue, saveConfig } from "../config.ts";
@@ -27,6 +27,7 @@ import { buildUsageView, type UsageView } from "./view-usage.ts";
 export interface HubDeps {
 	ctx: ExtensionCommandContext;
 	tui: OverlayTui;
+	kb: Parameters<typeof cancelKey>[0];
 	theme: Theme;
 	/** Environment this hub was opened on; every write goes through its profile. */
 	snapshot: ProfileSnapshot;
@@ -36,8 +37,8 @@ export interface HubDeps {
 	done: () => void;
 }
 
-export function buildHub(deps: HubDeps): Component & { handleInput(data: string): void } {
-	const { ctx, tui, theme, cfg, done, runtime } = deps;
+export function buildHub(deps: HubDeps) {
+	const { ctx, tui, kb, theme, cfg, done, runtime } = deps;
 	let discovery = deps.discovery;
 	let dirty = false; // unsaved config changes
 	let flash = ""; // transient status message (save/refresh/setup feedback)
@@ -173,7 +174,7 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 	};
 
 	const render = (width: number): string[] => {
-		const totalRows = tui.rows ?? 40;
+		const totalRows = tui.size?.().rows ?? tui.rows ?? 40;
 		// frame() adds a top + bottom border, so the lines we hand it must total
 		// `frameTotal - 2`. Keep frameTotal within the overlay's 94% budget
 		// (proven range 16\u201338) so the box never overflows and gets clipped
@@ -209,9 +210,8 @@ export function buildHub(deps: HubDeps): Component & { handleInput(data: string)
 
 	// ----- input -------------------------------------------------------------
 	const globalInput = (data: string): boolean | Promise<boolean> => {
-		const kb = getKeybindings();
 		if (
-			kb.matches(data, "tui.select.cancel") ||
+			cancelKey(kb, data) ||
 			matchesKey(data, "q") ||
 			matchesKey(data, "escape")
 		) {

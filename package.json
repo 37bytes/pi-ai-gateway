@@ -1,6 +1,6 @@
 {
 	"name": "pi-ai-gateway",
-	"version": "0.4.3-agp.18",
+	"version": "0.4.3-agp.19",
 	"type": "module",
 	"description": "AI Gateway extension for Pi model discovery, routing, and quota visibility",
 	"license": "MIT",
@@ -43,7 +43,8 @@
 		"check:agp-alias": "bun scripts/run-isolated.ts tests/agp-alias.ts",
 		"check:legacy-resume": "bun scripts/run-isolated.ts tests/legacy-resume.ts",
 		"check:fail-closed": "bun scripts/run-isolated.ts tests/fail-closed.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all && npm run check:profile-layout && npm run check:profile-namespace && npm run check:profile-binding && npm run check:profile-isolation && npm run check:child-inheritance && npm run check:api-family-override && npm run check:runtime-separation && npm run check:agp-alias && npm run check:legacy-resume && npm run check:fail-closed"
+		"check:bb": "bun scripts/run-isolated.ts tests/bb-models.ts && bun scripts/run-isolated.ts tests/bb-usage.ts && bun scripts/run-isolated.ts tests/refresh-aliases.ts",
+		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all && npm run check:profile-layout && npm run check:profile-namespace && npm run check:profile-binding && npm run check:profile-isolation && npm run check:child-inheritance && npm run check:api-family-override && npm run check:runtime-separation && npm run check:agp-alias && npm run check:legacy-resume && npm run check:fail-closed && npm run check:bb"
 	},
 	"dependencies": {
 		"@oh-my-pi/pi-catalog": "18.2.0"

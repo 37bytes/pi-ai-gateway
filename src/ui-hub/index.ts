@@ -33,10 +33,11 @@ export async function runHub(
 	setLogQuiet(true);
 	try {
 		await ctx.ui.custom<void>(
-			(tui, theme, _kb, done) =>
+			(tui, theme, kb, done) =>
 				buildHub({
 					ctx,
 					tui: tui as unknown as OverlayTui,
+					kb,
 					theme: theme as unknown as Theme,
 					runtime,
 					snapshot,
@@ -46,7 +47,7 @@ export async function runHub(
 				}),
 			{
 				overlay: true,
-				overlayOptions: { width: 170, maxHeight: "94%" },
+				...("composer" in ctx.ui ? {} : { overlayOptions: { width: 170, maxHeight: "94%" } }),
 			},
 		);
 	} finally {

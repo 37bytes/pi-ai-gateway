@@ -208,10 +208,10 @@ Extra Models keys: `d` removes a custom group (with confirmation).
 You need an AI Gateway Platform endpoint with the OMP compatibility façade
 enabled and an ordinary AGP LLM key authorized for the required models.
 
-The session-profile lifecycle is verified against the actual compiled OMP
-18.11.1 runtime. Public SDK/catalog dependencies remain pinned to 18.2.0; no
-private host patch or invented capability marker is used. Bun 1.3.14 or newer
-is required for development checks.
+The extension supports OMP 19.1.1 and 19.2.0. OMP 19.2 uses the new host TUI
+for overlays and setup, including masked credential entry. Public SDK/catalog
+dependencies stay pinned to 18.2.0 for older hosts. Development checks require
+Bun 1.3.14 or newer; the OMP 19.2 npm host requires Bun 1.4.4 or newer.
 Gateway credentials remain private to the guarded final HTTP fetch; they are
 never registered as provider-wide host API keys.
 
@@ -230,7 +230,7 @@ precedence over that default.
 ## Install
 
 ```bash
-pi install github:37bytes/pi-ai-gateway
+omp plugin install github:37bytes/pi-ai-gateway#v0.4.3-agp.19
 ```
 
 Then run `/cliproxy-setup` to configure the AGP endpoint. The legacy command

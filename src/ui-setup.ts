@@ -10,7 +10,8 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
 import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
-import { type Component, getKeybindings, Input, matchesKey } from "@oh-my-pi/pi-tui";
+import * as tuiLegacy from "@oh-my-pi/pi-tui";
+import { cancelKey, matchesKey } from "./ui-compat.ts";
 
 import { loadConfig, resolveConfigValue, saveConfig } from "./config.ts";
 import { profilePaths } from "./profiles.ts";
@@ -155,14 +156,33 @@ async function promptStep(
 	step: WizardStep,
 	prefill: string,
 ): Promise<string | undefined> {
+	if (typeof tuiLegacy.Input !== "function") {
+		const secret = step.label === "apiKey";
+		let title = `Setup: ${step.label}\n${step.hint}`;
+		const secretOptions = { secret: true } as Parameters<typeof ctx.ui.input>[2];
+		let draft = prefill;
+		for (;;) {
+			const raw = secret
+				? await ctx.ui.input(title, prefill ? "Leave blank to keep the current key" : undefined, secretOptions)
+				: await ctx.ui.editor(title, draft);
+			if (raw === undefined) return undefined;
+			const value = raw.trim() || (secret ? prefill : "");
+			if (!secret) draft = raw;
+			const error = !value && step.required ? "required field"
+				: value && !value.startsWith("!") && !value.startsWith("$") ? step.validate?.(value) : undefined;
+			if (!error) return value;
+			title = `Setup: ${step.label}\n${error}. ${step.hint}`;
+		}
+	}
 	return ctx.ui.custom<string | undefined>(
-		(tui, theme, _kb, done) =>
+		(tui, theme, kb, done) =>
 			buildStepOverlay(
 				tui as unknown as {
 					requestRender(): void;
 					rows?: number;
 					cols?: number;
 				},
+				kb,
 				theme as unknown as Theme,
 				step,
 				prefill,
@@ -174,12 +194,14 @@ async function promptStep(
 
 function buildStepOverlay(
 	tui: { requestRender(): void; rows?: number; cols?: number },
+	kb: Parameters<typeof cancelKey>[0],
 	theme: Theme,
 	step: WizardStep,
 	prefill: string,
 	done: (v: string | undefined) => void,
-): Component & { handleInput(data: string): void } {
-	const input = new Input();
+): tuiLegacy.Component & { handleInput(data: string): void } {
+	const input = new tuiLegacy.Input();
+	input.mask = step.label === "apiKey";
 	input.setValue(prefill);
 	input.focused = true;
 	let error: string | null = null;
@@ -236,8 +258,7 @@ function buildStepOverlay(
 			input.invalidate();
 		},
 		handleInput(data: string): void {
-			const kb = getKeybindings();
-			if (kb.matches(data, "tui.select.cancel") || matchesKey(data, "escape")) {
+			if (cancelKey(kb, data) || matchesKey(data, "escape")) {
 				done(undefined);
 				return;
 			}

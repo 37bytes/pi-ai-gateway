@@ -23,7 +23,7 @@
 // Anything inside `lines` may already contain ANSI escapes; pad() is ANSI-aware
 // (see render-text.ts). No caller should ever draw \u256d/\u256e/\u2502/\u2570/\u256f by hand again.
 
-import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { visibleWidth } from "./ui-compat.ts";
 
 import { pad } from "./ui-picker/render-text.ts";
 import type { Theme } from "./ui-picker/types.ts";

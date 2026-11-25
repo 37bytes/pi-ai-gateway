@@ -1,7 +1,7 @@
 // Usage view — wraps renderUsage() in a scrollable hub tab with d/v toggles.
 // The /api/usage document is fetched lazily the first time the tab is opened.
 
-import { matchesKey } from "@oh-my-pi/pi-tui";
+import { matchesKey } from "../ui-compat.ts";
 
 import { clearUsageCache, fetchUsage, type UsageDocument } from "../fetch-usage.ts";
 import type { ProfileSnapshot } from "../profile-context.ts";

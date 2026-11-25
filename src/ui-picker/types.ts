@@ -9,6 +9,7 @@ export interface Theme {
 
 export interface OverlayTui {
 	requestRender(): void;
+	size?(): { rows: number };
 	rows?: number;
 	cols?: number;
 }

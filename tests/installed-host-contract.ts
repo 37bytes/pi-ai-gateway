@@ -213,7 +213,6 @@ export default async function(pi) {
 			[
 				binary,
 				"--no-session",
-				"--no-tools",
 				"--no-skills",
 				"--no-rules",
 				"--extension",

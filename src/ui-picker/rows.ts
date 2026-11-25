@@ -7,7 +7,7 @@
 // but more muted (\u00b7 dim) \u2014 this gives users a hint where focus is
 // without losing track of selection across panels.
 
-import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { visibleWidth } from "../ui-compat.ts";
 
 import type { ProxyConfig } from "../config.ts";
 import { pad, truncateAnsi } from "./render-text.ts";

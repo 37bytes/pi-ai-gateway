@@ -224,4 +224,3 @@ export async function adoptStoredSessionModel(
 	if (moved) log.info(`session model ${stored} moved to ${mapped.mapped} on ${snapshot.id}`);
 	return moved;
 }
-
