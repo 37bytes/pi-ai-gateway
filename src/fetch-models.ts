@@ -47,6 +47,7 @@ export interface DiscoveryModelEntry {
 		}>;
 	};
 	name: string;
+	kind?: "chat" | "image";
 	reasoning?: boolean;
 	input?: ("text" | "image")[];
 	contextWindow?: number;
@@ -361,6 +362,7 @@ function normalizeModel(m: Partial<DiscoveryModelEntry> & { id: string }): Disco
 		metadataState,
 		priceState,
 	};
+	if (m.kind === "chat" || m.kind === "image") entry.kind = m.kind;
 	for (const key of [
 		"wireId",
 		"selectorId",

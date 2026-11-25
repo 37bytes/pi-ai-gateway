@@ -344,7 +344,8 @@ export function createSessionRuntime(
 			profile: snapshot.id,
 			profileIds: profileIds(),
 			paths: snapshot.paths,
-			gate: () => isCurrent(snapshot),
+			gate: sessionId => isCurrent(snapshot) &&
+				(sessionId === undefined || bindings.get(sessionId)?.id === snapshot.id),
 			keepNames: namesKeptForOthers(snapshot.sessionKey),
 		});
 		if (report.superseded) {
@@ -491,6 +492,11 @@ export function createSessionRuntime(
 			// register nothing. A session is never moved to another environment
 			// because the requested one is missing, and no config or credential is
 			// resolved for an environment we have just refused.
+			if (!isChild) {
+				bindings.delete(ROOT_SESSION_KEY);
+				if (topLevelKey && topLevelKey !== sessionKey) await retireSession(topLevelKey, "refused replacement");
+				releaseUnheldNames(api);
+			}
 			const problem = picked.problem;
 			log.error(
 				`environment "${problem?.requested ?? "(unknown)"}" is unusable for session ${sessionKey}: ` +
@@ -598,7 +604,9 @@ export function createSessionRuntime(
 	const snapshotForContext = (ctx: ExtensionContext): ProfileSnapshot | null => {
 		const key = sessionIdOf(ctx) ?? ROOT_SESSION_KEY;
 		const binding = bindings.get(key);
-		return binding ? snapshotFor(binding, key) : rootSnapshot();
+		if (binding) return snapshotFor(binding, key);
+		if (persistedProfile(entriesOf(ctx)).problem) return null;
+		return rootSnapshot();
 	};
 
 	const isCurrent = (snapshot: ProfileSnapshot): boolean => {
@@ -861,6 +869,9 @@ export function createSessionRuntime(
 					await applyRoleMapping(backSnapshot);
 					await applySnapshot(backSnapshot, back, api);
 					reportStatus(ctx, backSnapshot);
+					// The setup callback already recorded the target binding: leave the
+					// restored route as the newest durable record, never the failed one.
+					persistBinding(backSnapshot, api);
 				} catch (err) {
 					log.error("could not restore the new conversation's binding:", (err as Error).message);
 				}

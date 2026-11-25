@@ -215,9 +215,19 @@ export function mergeModelMetadata(
 		metadataState: entry.metadataState,
 		priceState: "unknown",
 	};
+	const kind = override.kind ?? configured.kind ?? entry.kind;
+	if (kind !== undefined) merged.kind = kind;
+	if (kind === "image") merged.api = override.api ?? configured.api ?? "openai-images";
 	let manualMetadata = false;
 	for (const key of ["reasoning", "input", "contextWindow", "maxTokens"] as const) {
-		const value = override[key] ?? configured[key] ?? entry[key] ?? catalog?.[key];
+		// Limits are route facts. A bundled catalog default for the same id may
+		// describe another deployment, so it is never promoted into a registration
+		// that the host must treat as authoritative.
+		const value =
+			override[key] ??
+			configured[key] ??
+			entry[key] ??
+			(key === "contextWindow" || key === "maxTokens" ? undefined : catalog?.[key]);
 		if (value !== undefined && value !== null) Object.assign(merged, { [key]: value });
 		if (override[key] !== undefined || configured[key] !== undefined) manualMetadata = true;
 	}
@@ -242,7 +252,13 @@ export function mergeModelMetadata(
 	}
 	if (Object.keys(cost).length) {
 		merged.cost = cost;
-		merged.priceState = cost.input !== undefined && cost.output !== undefined ? "known" : "partial";
+		// A price state is complete only when every leg is known; input+output
+		// alone says nothing about the cache legs a turn may actually use.
+		merged.priceState = [cost.input, cost.output, cost.cacheRead, cost.cacheWrite].every(
+			(value) => value !== undefined,
+		)
+			? "known"
+			: "partial";
 	}
 	for (const key of ["contextWindow", "maxTokens"] as const) {
 		const value = merged[key];
@@ -256,8 +272,8 @@ export interface ApplyOptions {
 	profile: string;
 	/** Profile ids known to the registry; used to recover a base namespace. */
 	profileIds: readonly string[];
-	/** Re-checked immediately before anything is registered. */
-	gate?: () => boolean;
+	/** Re-check before registration and dispatch; a request may name its owning session. */
+	gate?: (sessionId?: string) => boolean;
 	/**
 	 * Provider names that must stay registered.
 	 *
@@ -277,10 +293,10 @@ export async function applyAll(
 	discovery: Discovery,
 	options: ApplyOptions,
 ): Promise<ApplyReport> {
-	const { profile, profileIds } = options;
+	const { profile, profileIds, gate } = options;
 	const buildModel = await requireGatewayTransport();
 	const report: ApplyReport = { registered: [], skipped: [] };
-	if (options.gate && !options.gate()) {
+	if (gate && !gate()) {
 		// The selected environment changed while the transport was loading: this
 		// pool belongs to the environment this session is no longer on.
 		report.superseded = true;
@@ -328,6 +344,19 @@ export async function applyAll(
 				];
 				return {
 					...m,
+					// Route-local truth, including explicit unknown limits and prices:
+					// the host must not fill these from a bundled or reference catalog.
+					metadataAuthoritative: true,
+					contextWindow: m.contextWindow ?? null,
+					maxTokens: m.maxTokens ?? null,
+					pricingStatus:
+						m.priceState !== "known"
+							? "unknown"
+							: [m.cost?.input, m.cost?.output, m.cost?.cacheRead, m.cost?.cacheWrite].every(
+										(value) => value === 0,
+									)
+								? "free"
+								: undefined,
 					api: bridgeAPI,
 					name: unavailable.length ? `${m.name} [${unavailable.join("; ")}]` : m.name,
 				};
@@ -338,6 +367,9 @@ export async function applyAll(
 				return config.models ?? [];
 			},
 			streamSimple(model, context, options) {
+				if (gate && !gate(options?.sessionId)) {
+					throw new Error("Gateway request does not belong to its registered environment");
+				}
 				if (
 					model.provider !== name ||
 					model.api !== bridgeAPI ||
@@ -395,6 +427,9 @@ export async function applyAll(
 				// options (signal, CA/proxy init) already reach this final boundary.
 				const send = globalThis.fetch;
 				const gatewayFetch: GatewayFetch = async (input, init) => {
+					if (gate && !gate(options?.sessionId)) {
+						throw new Error("Gateway request does not belong to its registered environment");
+					}
 					const target = new URL(input instanceof Request ? input.url : String(input));
 					if (target.href !== gatewayRequestURL.href || target.username || target.password) {
 						throw new Error("Gateway transport rejected an endpoint outside its registered route");
@@ -482,6 +517,7 @@ export async function applyAll(
 		for (const id of provider.models ?? []) {
 			const entry = fromServer?.models.find((m) => m.id === id);
 			if (!entry) continue;
+			if ((cfg.overrides[id]?.kind ?? entry.kind) === "image") continue;
 			const model = mergeModelMetadata(
 				entry,
 				{ id },
@@ -513,6 +549,8 @@ export async function applyAll(
 		for (const configured of provider.models) {
 			const entry = byId.get(configured.id);
 			if (!entry) continue;
+			// Images use the existing provider's native OMP image transport, not streamSimple.
+			if ((cfg.overrides[entry.id]?.kind ?? configured.kind ?? entry.kind) === "image") continue;
 			if (entry.api !== provider.api) {
 				if (operatorApi === provider.api) {
 					log.warn(

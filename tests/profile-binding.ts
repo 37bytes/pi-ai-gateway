@@ -33,7 +33,9 @@ process.env.HOME = home;
 // Dynamic imports: home/config paths are computed at module evaluation, so HOME
 // must be isolated before the production modules load (same pattern as the
 // other contract tests).
-const { profilePaths, PROFILES_DIR, FILE_MODE } = await import("../src/profiles.ts");
+const { profilePaths, PROFILES_DIR, FILE_MODE, readRegistry, writeRegistry } = await import(
+	"../src/profiles.ts"
+);
 const { saveConfig } = await import("../src/config.ts");
 const { writeDiscoveryCache } = await import("../src/cache.ts");
 const { cacheScope } = await import("../src/cache-scope.ts");
@@ -44,6 +46,7 @@ const {
 	launchDecision,
 	defaultSeed,
 	persistedProfile,
+	profileEntryData,
 	sessionHasHistory,
 	profileFromRegisteredNames,
 	pickProfileForSession,
@@ -220,6 +223,71 @@ try {
 		"retired",
 		"a persisted environment this machine no longer has is reported, not dropped",
 	);
+
+	// A profile the owner marked as replaced by a new incarnation refuses the
+	// historical binding instead of silently sending that history to the new
+	// server. `prod` declares no boundary, so its legacy bindings stay valid.
+	const registry = readRegistry();
+	const originalTest = registry.profiles.test;
+	try {
+		writeRegistry({
+			...registry,
+			profiles: { ...registry.profiles, test: { label: "TEST", bindingIncarnation: "agp3-fixture" } },
+		});
+		const legacyTest = [
+			{
+				type: "custom",
+				customType: PROFILE_ENTRY_TYPE,
+				data: { profile: "test", boundAt: "2026-10-19T00:00:00.000Z" },
+			},
+		];
+		const refused = persistedProfile(legacyTest);
+		assert.equal(refused.id, null, "a pre-replacement binding is refused");
+		assert.equal(refused.problem?.requested, "test");
+		assert.match(refused.problem?.reason ?? "", /--keep-history/);
+		assert.match(refused.problem?.reason ?? "", /new conversation/);
+		assert.deepEqual(
+			persistedProfile([
+				{
+					type: "custom",
+					customType: PROFILE_ENTRY_TYPE,
+					data: { profile: "prod", boundAt: "2026-10-19T00:00:00.000Z" },
+				},
+			]),
+			{ id: "prod", problem: null },
+			"legacy prod history stays on prod",
+		);
+		const fresh = profileEntryData({ id: "test" });
+		assert.equal(fresh.origin, originOf(TEST_ENDPOINT));
+		assert.equal(fresh.incarnation, "agp3-fixture");
+		assert.deepEqual(
+			persistedProfile([
+				{ type: "custom", customType: PROFILE_ENTRY_TYPE, data: fresh },
+			]),
+			{ id: "test", problem: null },
+		);
+		// A deliberate move appends a fresh record after the historical one.
+		assert.deepEqual(
+			persistedProfile([legacyTest[0]!, { type: "custom", customType: PROFILE_ENTRY_TYPE, data: fresh }]),
+			{ id: "test", problem: null },
+		);
+		assert.equal(
+			persistedProfile([
+				{
+					type: "custom",
+					customType: PROFILE_ENTRY_TYPE,
+					data: { ...fresh, origin: "https://other.test" },
+				},
+			]).problem?.requested,
+			"test",
+			"a binding to another endpoint is refused even with a current incarnation",
+		);
+	} finally {
+		writeRegistry({
+			...registry,
+			profiles: { ...registry.profiles, test: originalTest ?? { label: "TEST" } },
+		});
+	}
 	assert.equal(sessionHasHistory([{ type: "message" }]), true);
 	assert.equal(sessionHasHistory([{ type: "custom" }]), false);
 

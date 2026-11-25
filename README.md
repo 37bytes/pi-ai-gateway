@@ -7,6 +7,14 @@ visibility. Each named environment profile has its own AGP endpoint, ordinary
 LLM key, model configuration and caches. A conversation stays on its selected
 profile; another process can use a different environment simultaneously.
 
+Image routes keep their native OMP model definition under the existing gateway provider:
+set the model's `kind: image`, `api: openai-images` and image role there. Mirror
+`kind`/`api` in the profile's matching model override so discovery never registers it
+through the chat bridge. The plugin preserves those fields when saving configuration.
+Do not name a gateway-only image provider `openai`: that enables OMP's bundled OpenAI
+catalog rather than restricting it to the configured image route.
+
+
 ## Production and test profiles
 
 The built-in profile names are `prod` and `test`. The first migration keeps the
@@ -46,6 +54,9 @@ environment; the previous conversation remains saved on its original server.
 A streaming turn must finish or be explicitly cancelled before a switch.
 Unavailable target discovery/model authority refuses the transition rather
 than silently sending the next turn to the previous server.
+A stable model selector can still hold another environment's transport object.
+A switch reselects that model when the gateway API or full base URL differs; a host refusal restores the old environment rather than leaving a new label on the old route.
+
 
 The footer shows one compact row: a green test/red production dot followed by
 the selected provider's quota windows. The hub retains the environment and
@@ -257,6 +268,31 @@ directory holds `discovery-cache.json`, `usage-cache.json`, `usage-cache.lock`
 and the generated OMP role overlay. Owned directories are `0700`; configs and
 caches are written atomically with `0600` permissions.
 
+A descriptor may carry an optional one-time replacement boundary:
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "defaultProfile": "prod",
+  "profiles": {
+    "prod": { "label": "PROD" },
+    "test": { "label": "TEST", "bindingIncarnation": "agp3-20261111" }
+  }
+}
+```
+
+Every new session binding records its profile, the endpoint `origin` and that
+`bindingIncarnation`. When a descriptor declares one, a resumed conversation
+whose newest binding has a different origin or no matching incarnation is
+refused at session binding. Any factory-time launch-seed transport is revoked,
+and every inference checks its live session authority before dispatch. Startup
+metadata may already have loaded the launch seed; no conversation is sent on it.
+The explicit remedy is a new conversation (`/cliproxy-profile <id>`) or deliberately moving
+this one (`/cliproxy-profile <id> --keep-history`). Profiles without the field
+(`prod`) keep historical bindings valid. Set it once, when a profile's endpoint
+is repurposed, and never rewrite conversation history: the guard reads only the
+binding entries and appends a new one on an explicit move.
+
 On upgrade, the old single `ai-gateway/config.json` and scope-matching caches
 move once into `profiles/prod`; caches for another endpoint/key are not adopted.
 Upstream `~/.pi/agent/pi-cliproxyapi/config.json` and the older
@@ -350,9 +386,16 @@ missing components stay absent in discovery/configuration. `metadataState` is
 `catalog`, `override`, or `unknown`; `priceState` is `known`, `partial`, or
 `unknown`. The plugin labels incomplete model names with `context unknown`,
 `output limit unknown`, `price unknown`, or `price partial` as applicable.
-Stock OMP may still fill numeric runtime defaults in its own model cards; those
-are not discovered gateway limits or confirmed free prices. Selecting a model in
-the plugin picker does not freeze capacities/prices into manual overrides.
+
+Registrations opt into OMP's authoritative model metadata contract:
+`metadataAuthoritative: true`, explicit `null` limits, the discovered
+`pricingStatus` (`unknown` for a partial/unknown card, `free` only for a
+complete four-leg zero card), and the missing cost legs the host must not
+invent. A matching host preserves the unknown limits and partial prices instead
+of filling catalog/reference defaults. Hosts without that contract cannot be
+used for this profile: use the source-bound OMP build carrying the AGP-3
+metadata fix. Selecting a model in the plugin picker does not freeze
+capacities/prices into manual overrides.
 
 ### Opt-in request latency diagnostics
 
@@ -467,14 +510,21 @@ src/
 
 ## Release acceptance
 
-Version `0.4.3-agp.11` adds session-bound server profiles. Publishing and
+This source stand is a reviewable candidate, not an installed or published
+release: nothing here changes the running OMP/plugin installation. Its
+`package.json` version stays the imported installed base until the owner cuts a
+release; commits are pinned by full SHA.
+
+Version `0.4.3-agp.11` added session-bound server profiles. Publishing and
 installation are separate operator steps; installations should pin the full
 Git commit. `npm test` uses credential-free temporary homes and covers profile
 migration, namespace/credential boundaries, cache isolation, async generations,
 child origin, transactional switching and model metadata/transport contracts.
-The actual OMP 18.11.1 lifecycle smoke additionally exercises concurrent
-prod/test processes, a confirmed new-conversation switch, inactive-provider
-cleanup, and resuming the original conversation on its original server.
+The source-bound AGP-3 additions cover authoritative metadata registration and
+the explicit profile replacement boundary. The actual OMP lifecycle smoke
+additionally exercises concurrent prod/test processes, a confirmed
+new-conversation switch, inactive-provider cleanup, and resuming the original
+conversation on its original server.
 
 Run `npm run check:installed-host` against the actual installed OMP binary.
 This local-only fixture runs two real conversations against a warm cache,

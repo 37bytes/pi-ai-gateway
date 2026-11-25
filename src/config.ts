@@ -122,6 +122,9 @@ export interface BuiltinProviderConfig {
 export interface CustomProviderModelConfig {
 	id: string;
 	name?: string;
+	/** Non-chat models stay on OMP's native transport, never the chat bridge. */
+	kind?: "chat" | "image";
+	api?: Api;
 	contextWindow?: number;
 	maxTokens?: number;
 	reasoning?: boolean;

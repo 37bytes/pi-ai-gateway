@@ -171,11 +171,12 @@ export function resumedProfileSeed(
 	const path = explicit ?? latestSessionFile(cwd);
 	if (!path) return null;
 	let profile: string | null = null;
+	let record: ProfileBindingRecord | undefined;
 	let history = false;
 	try {
 		for (const line of readFileSync(path, "utf8").split("\n")) {
 			if (!line) continue;
-			let entry: { type?: string; customType?: string; data?: { profile?: unknown } };
+			let entry: { type?: string; customType?: string; data?: Partial<ProfileBindingRecord> };
 			try {
 				entry = JSON.parse(line);
 			} catch {
@@ -183,7 +184,10 @@ export function resumedProfileSeed(
 			}
 			if (entry.type === "custom" && entry.customType === PROFILE_ENTRY_TYPE) {
 				const value = entry.data?.profile;
-				if (typeof value === "string") profile = value;
+				if (typeof value === "string") {
+					profile = value;
+					record = entry.data as ProfileBindingRecord;
+				}
 			}
 			if (entry.type === "message" || entry.type === "compaction" || entry.type === "branch_summary") {
 				history = true;
@@ -192,7 +196,10 @@ export function resumedProfileSeed(
 	} catch {
 		return null;
 	}
-	if (profile && isValidProfileId(profile) && readRegistry().profiles[profile]) {
+	// A binding refused by the profile's replacement boundary is not a launch
+	// seed: registering that environment before the session exists would leave
+	// its providers reachable even though session binding fails closed.
+	if (profile && isValidProfileId(profile) && readRegistry().profiles[profile] && !bindingProblem(profile, record)) {
 		return { id: profile, source: "session" };
 	}
 	if (history) return { id: DEFAULT_PROFILE, source: "legacy" };
@@ -220,6 +227,25 @@ function latestSessionFile(cwd: string): string | null {
 }
 
 /**
+ * Why a persisted binding cannot be used on this machine, or null when it can.
+ * Only profiles that declare a replacement boundary enforce it; a missing
+ * origin/incarnation is stale there, never silently upgraded to the new route.
+ */
+function bindingProblem(found: string, record: ProfileBindingRecord | undefined): ProfileProblem | null {
+	const descriptor = readRegistry().profiles[found];
+	if (descriptor?.bindingIncarnation === undefined) return null;
+	const current = currentBindingIdentity(found);
+	if (record?.incarnation === descriptor.bindingIncarnation && record?.origin === current.origin) return null;
+	return problem(
+		found,
+		`this conversation was bound to ${found.toUpperCase()} at ${record?.origin ?? "an earlier endpoint"}, before that ` +
+			`environment was replaced by ${current.origin}; continuing this history there is refused. Start a new ` +
+			`conversation with /cliproxy-profile ${found}, or deliberately move this one with ` +
+			`/cliproxy-profile ${found} --keep-history.`,
+	);
+}
+
+/**
  * The profile this session file was bound to, if the plugin wrote one.
  *
  * An unknown binding is reported as a problem rather than dropped: a resumed
@@ -228,11 +254,17 @@ function latestSessionFile(cwd: string): string | null {
 export function persistedProfile(
 	entries: readonly { type: string; customType?: string; data?: unknown }[],
 ): { id: string | null; problem: ProfileProblem | null } {
+	// The newest binding entry wins: a deliberate `--keep-history` move appends a
+	// new record after the historical one, and that record is the session's route.
 	let found: string | null = null;
+	let record: ProfileBindingRecord | undefined;
 	for (const entry of entries) {
 		if (entry.type !== "custom" || entry.customType !== PROFILE_ENTRY_TYPE) continue;
-		const candidate = (entry.data as { profile?: unknown } | undefined)?.profile;
-		if (typeof candidate === "string") found = candidate;
+		const data = entry.data as ProfileBindingRecord | undefined;
+		if (typeof data?.profile === "string") {
+			found = data.profile;
+			record = data;
+		}
 	}
 	if (!found) return { id: null, problem: null };
 	if (!isValidProfileId(found) || !readRegistry().profiles[found]) {
@@ -244,6 +276,8 @@ export function persistedProfile(
 			),
 		};
 	}
+	const stale = bindingProblem(found, record);
+	if (stale) return { id: null, problem: stale };
 	return { id: found, problem: null };
 }
 
@@ -488,9 +522,33 @@ export function describeProfile(snapshot: ProfileSnapshot): string {
 	return `${snapshot.label} \u00b7 ${snapshot.origin}`;
 }
 
-/** Session entry payload for this plugin's binding (needs only the profile id). */
-export function profileEntryData(target: { id: string }): { profile: string; boundAt: string } {
-	return { profile: target.id, boundAt: new Date().toISOString() };
+/**
+ * The binding identity a session entry records: the profile it names plus the
+ * route it was bound to (`origin`) and, when the profile declares a replacement
+ * boundary, the incarnation that boundary belongs to.
+ */
+export interface ProfileBindingRecord {
+	profile: string;
+	boundAt: string;
+	origin?: string;
+	incarnation?: string;
+}
+
+/** Current route identity of a profile; `incarnation` is unset until the owner declares a boundary. */
+function currentBindingIdentity(id: string): { origin: string; incarnation?: string } {
+	const incarnation = readRegistry().profiles[id]?.bindingIncarnation;
+	return { origin: originOf(loadConfig(id, profilePaths(id)).proxy.endpoint), incarnation };
+}
+
+/** Session entry payload for this plugin's binding. */
+export function profileEntryData(target: { id: string }): ProfileBindingRecord {
+	const identity = currentBindingIdentity(target.id);
+	return {
+		profile: target.id,
+		boundAt: new Date().toISOString(),
+		origin: identity.origin,
+		...(identity.incarnation ? { incarnation: identity.incarnation } : {}),
+	};
 }
 
 /** Session id of a live context, when the host exposes one. */

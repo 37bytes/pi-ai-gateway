@@ -179,6 +179,10 @@ function freshCtx(sessionId, entries = []) {
 	};
 	try {
 		const runtime = createSessionRuntime(pi, { root: { id: "prod", source: "launch-env" } });
+		const startup = runtime.rootSnapshot();
+		runtime.registerDiscovery(startup, discoveryFixture);
+		await runtime.applySnapshot(startup, discoveryFixture);
+		registered.length = 0;
 		const entries = [
 			{ type: "message", message: { role: "user", content: [{ type: "text", text: "hi" }] } },
 			{ type: "custom", customType: PROFILE_ENTRY_TYPE, data: { profile: "retired" } },
@@ -191,6 +195,8 @@ function freshCtx(sessionId, entries = []) {
 		assert.equal(result.snapshot, null, "and no config is resolved for it");
 		assert.deepEqual(registered, [], "prod is not registered in its place");
 		assert.deepEqual(fetchCalls, []);
+		assert.equal(runtime.isCurrent(startup), false, "refusal revokes the factory-time transport authority");
+		assert.equal(runtime.snapshotFor(freshCtx("persisted-missing", entries)), null, "a refused history cannot recreate a production root");
 	} finally {
 		globalThis.fetch = originalFetch;
 	}

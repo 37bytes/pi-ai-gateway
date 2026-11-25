@@ -28,6 +28,7 @@
 // selector) is left exactly as it was.
 
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { baseUrlFor } from "./compat.ts";
 
 import { log } from "./log.ts";
 import type { ProfileSnapshot } from "./profile-context.ts";
@@ -143,10 +144,14 @@ export function planModelMove(
 	const mapped = mapSelector(selector, profileIds, catalog);
 	if (mapped) return { kind: "move", selector: mapped.mapped };
 	const namespace = agpProfileOf(provider, profileIds);
-	// Plain provider names are this environment's registrations. A model it no
-	// longer serves cannot be kept on a foreign transport.
+	// A stable selector can still hold the previous environment's model object.
 	if (catalog.providers.has(provider)) {
-		return catalogHasAny(catalog, id) ? { kind: "none" } : { kind: "impossible", selector };
+		if (!catalog.providers.get(provider)?.has(id)) return { kind: "impossible", selector };
+		const anthropic = current.api === "anthropic-messages" || current.api?.endsWith(":anthropic-messages");
+		const expectedBaseUrl = baseUrlFor(anthropic ? "anthropic-messages" : "openai-completions", snapshot.endpoint);
+		return current.api?.startsWith(`agp:${provider}:`) && current.baseUrl === expectedBaseUrl
+			? { kind: "none" }
+			: { kind: "move", selector };
 	}
 	// A direct provider is not an AGP registration: leaving it alone is the
 	// documented behaviour, not a fallback.

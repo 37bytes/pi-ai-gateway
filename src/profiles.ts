@@ -57,6 +57,13 @@ export const DEFAULT_PROFILE = "prod";
 
 export interface ProfileDescriptor {
 	label: string;
+	/**
+	 * One-time replacement boundary. When set, a session binding recorded
+	 * before this incarnation (or on another endpoint) is refused instead of
+	 * silently continuing on the repurposed profile. Unset keeps historical
+	 * bindings valid, as `prod` requires.
+	 */
+	bindingIncarnation?: string;
 }
 
 export interface ProfileRegistry {
@@ -155,8 +162,15 @@ function normalizeRegistry(raw: unknown): ProfileRegistry | null {
 	const source = (r.profiles ?? {}) as Record<string, unknown>;
 	for (const [id, descriptor] of Object.entries(source)) {
 		if (!isValidProfileId(id)) continue;
-		const label = (descriptor as ProfileDescriptor | undefined)?.label;
-		profiles[id] = { label: typeof label === "string" && label.trim() ? label.trim() : id.toUpperCase() };
+		const entry = descriptor as ProfileDescriptor | undefined;
+		const label = entry?.label;
+		const incarnation = entry?.bindingIncarnation;
+		profiles[id] = {
+			label: typeof label === "string" && label.trim() ? label.trim() : id.toUpperCase(),
+			...(typeof incarnation === "string" && incarnation.trim()
+				? { bindingIncarnation: incarnation.trim() }
+				: {}),
+		};
 	}
 	if (Object.keys(profiles).length === 0) return null;
 	const defaultProfile =

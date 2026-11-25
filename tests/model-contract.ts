@@ -30,6 +30,7 @@ const { fetchUsage, clearUsageCache } = await import("../src/fetch-usage.ts");
 const { readDiscoveryCache, writeDiscoveryCache } = await import("../src/cache.ts");
 const { readUsageCache, writeUsageCache } = await import("../src/usage-shared-cache.ts");
 const { profilePaths } = await import("../src/profiles.ts");
+const { saveConfig, loadConfig } = await import("../src/config.ts");
 
 const applyOptions = {
 	profile: "prod",
@@ -287,6 +288,87 @@ try {
 	assert.equal(partial.priceState, "partial");
 	assert.equal(partial.contextWindow, undefined);
 
+	const imageConfig = { id: model.id, kind: "image" as const, api: "openai-images" as Api };
+	const imageMetadata = mergeModelMetadata(model, imageConfig, {}, model.api);
+	assert.equal(imageMetadata.kind, "image");
+	assert.equal(imageMetadata.api, "openai-images");
+	const imageRegistrations: ProviderConfig[] = [];
+	await applyAll(
+		{ registerProvider(_name: string, config: ProviderConfig) { imageRegistrations.push(config); } } as ExtensionAPI,
+		{ ...cfg, overrides: { [model.id]: imageConfig } },
+		discovery,
+		applyOptions,
+	);
+	assert.ok(imageRegistrations.every((config) => !(config.models ?? []).some((m) => m.id === "gpt-6-astra")),
+		"a native image route must not be re-registered with the chat bridge API");
+	const imagePaths = profilePaths("test");
+	saveConfig("test", { ...cfg, overrides: { [model.id]: imageConfig } }, imagePaths);
+	assert.deepEqual(loadConfig("test", imagePaths).overrides[model.id], imageConfig);
+
+	// Registration states route-local truth explicitly: unknown limits stay null,
+	// a partial card stays partial, and a complete zero card is confirmed free.
+	const authoritativeConfigs: ProviderConfig[] = [];
+	await applyAll(
+		{
+			registerProvider(_name: string, config: ProviderConfig) {
+				authoritativeConfigs.push(config);
+			},
+		} as ExtensionAPI,
+		cfg,
+		{
+			...discovery,
+			customPool: [
+				{
+					...unknown,
+					id: "codex/unknown-limit",
+					wireId: "codex/unknown-limit",
+					selectorId: "unknown-limit",
+					name: "Unknown limit",
+				},
+				{
+					...model,
+					id: "codex/partial-price",
+					wireId: "codex/partial-price",
+					selectorId: "partial-price",
+					name: "Partial price",
+					cost: { input: 3 },
+					priceState: "partial",
+				},
+				{
+					...model,
+					id: "codex/free",
+					wireId: "codex/free",
+					selectorId: "free",
+					name: "Free",
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			],
+		},
+		applyOptions,
+	);
+	type RegisteredModel = Record<string, unknown> & { cost?: { input?: number }; id?: string };
+	const registeredModels = authoritativeConfigs.flatMap(
+		(config) => (config.models ?? []) as unknown as RegisteredModel[],
+	);
+	const registered = (id: string): RegisteredModel => {
+		const found = registeredModels.find((candidate) => candidate.id === id);
+		assert.ok(found, `registered ${id}`);
+		return found;
+	};
+	const unknownLimit = registered("unknown-limit");
+	assert.equal(unknownLimit.metadataAuthoritative, true);
+	assert.equal(unknownLimit.contextWindow, null);
+	assert.equal(unknownLimit.maxTokens, null);
+	assert.equal(unknownLimit.pricingStatus, "unknown");
+	assert.equal(unknownLimit.cost, undefined, "no invented price legs");
+	const partialPrice = registered("partial-price");
+	assert.equal(partialPrice.metadataAuthoritative, true);
+	assert.deepEqual(partialPrice.cost, { input: 3 });
+	assert.equal(partialPrice.pricingStatus, "unknown");
+	const freePrice = registered("free");
+	assert.equal(freePrice.metadataAuthoritative, true);
+	assert.equal(freePrice.pricingStatus, "free");
+
 	const explicit: ProxyConfig = {
 		...cfg,
 		customProviders: {
@@ -411,6 +493,7 @@ try {
 	failedSource.fail(streamFailure);
 	await assert.rejects(observedFailure.result(), (error) => error === streamFailure);
 	for (const api of ["openai-completions", "openai-responses", "anthropic-messages"] as const) {
+		let activeBinding = true;
 		const registrations: Array<{ name: string; config: ProviderConfig }> = [];
 		await applyAll(
 			{
@@ -420,7 +503,7 @@ try {
 			} as ExtensionAPI,
 			cfg,
 			{ ...discovery, customPool: [{ ...model, api }] },
-			applyOptions,
+			{ ...applyOptions, gate: (sessionId?: string) => activeBinding && (sessionId === undefined || sessionId === "session-fixture") },
 		);
 		assert.equal(registrations.length, 1);
 		assert.equal(registrations[0]!.name, "codex");
@@ -497,6 +580,17 @@ try {
 			0,
 			"a stale same-selector object must never dispatch the gateway credential",
 		);
+		assert.throws(
+			() => registered.streamSimple!(selected, context, { sessionId: "another-conversation" }),
+			/registered environment/,
+		);
+		activeBinding = false;
+		assert.throws(
+			() => registered.streamSimple!(selected, context, { sessionId: "session-fixture" }),
+			/registered environment/,
+		);
+		assert.equal(requests, 0, "refused or retired conversations never reach HTTP");
+		activeBinding = true;
 		let unsafeFetchCalls = 0;
 		const result = await registered.streamSimple!(selected, context, {
 			apiKey: "wrong-provider-key",
