@@ -40,9 +40,10 @@
 		"check:child-inheritance": "bun scripts/run-isolated.ts tests/child-inheritance.ts",
 		"check:api-family-override": "bun scripts/run-isolated.ts tests/api-family-override.ts",
 		"check:runtime-separation": "bun scripts/run-isolated.ts tests/runtime-separation.ts",
+		"check:agp-alias": "bun scripts/run-isolated.ts tests/agp-alias.ts",
 		"check:legacy-resume": "bun scripts/run-isolated.ts tests/legacy-resume.ts",
 		"check:fail-closed": "bun scripts/run-isolated.ts tests/fail-closed.ts",
-		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all && npm run check:profile-layout && npm run check:profile-namespace && npm run check:profile-binding && npm run check:profile-isolation && npm run check:child-inheritance && npm run check:api-family-override && npm run check:runtime-separation && npm run check:legacy-resume && npm run check:fail-closed"
+		"test": "npm run check:migration && npm run check:contract && npm run check:models && npm run check:quota && npm run check:child && npm run check:discovery-cache && npm run check:register-all && npm run check:profile-layout && npm run check:profile-namespace && npm run check:profile-binding && npm run check:profile-isolation && npm run check:child-inheritance && npm run check:api-family-override && npm run check:runtime-separation && npm run check:agp-alias && npm run check:legacy-resume && npm run check:fail-closed"
 	},
 	"dependencies": {
 		"@oh-my-pi/pi-catalog": "18.2.0"

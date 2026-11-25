@@ -14,6 +14,17 @@ through the chat bridge. The plugin preserves those fields when saving configura
 Do not name a gateway-only image provider `openai`: that enables OMP's bundled OpenAI
 catalog rather than restricting it to the configured image route.
 
+BB's AGP usage card reads profiles and quota through `src/bb-usage.ts` on the
+selected machine. This strict read-only entry never runs profile migration or
+repairs missing configuration; resolved credentials stay local. In ACP sessions
+carrying `BB_THREAD_ID`, an owner-checked private Unix socket exposes only profile
+state/model names and the existing idle transactional keep-history switch. It is
+part of the OMP process, not a separate daemon. Existing processes need a normal
+runtime restart to load new extension code; no active conversation is restarted
+by installation. Reset requests revalidate the exact source configuration revision
+and are never retried automatically.
+
+
 
 ## Production and test profiles
 
@@ -56,6 +67,20 @@ Unavailable target discovery/model authority refuses the transition rather
 than silently sending the next turn to the previous server.
 A stable model selector can still hold another environment's transport object.
 A switch reselects that model when the gateway API or full base URL differs; a host refusal restores the old environment rather than leaving a new label on the old route.
+
+The unified chat selector `agp/codex/gpt-6-astra` keeps its provider and wire ID
+when switching profiles. Its selected model receives the target route's guarded
+transport, without replacing the native `agp` provider or its image models.
+Profile switches verify the target route, API and endpoint before committing;
+an unavailable route or stale resolver refuses the switch. Direct `ds` models
+are not rebound.
+
+For an AGP + direct DeepSeek picker, use OMP's native `enabledModels` setting with
+`["agp/**", "ds/*"]`. The recursive glob is required for nested gateway route IDs.
+This scopes ACP selection without a BB interceptor or a dependency on an existing
+conversation. Internal route providers remain registered
+for transport and existing selectors. Already-running processes must restart
+normally to load extension changes; installation never interrupts a live turn.
 
 
 The footer shows one compact row: a green test/red production dot followed by

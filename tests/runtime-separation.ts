@@ -175,6 +175,7 @@ interface CtxMock {
 		resolve(spec: string): unknown;
 	};
 	isIdle(): boolean;
+	hasPendingMessages(): boolean;
 }
 
 function makeCtx(opts: {
@@ -206,6 +207,7 @@ function makeCtx(opts: {
 			resolve: (spec: string) => (opts.resolve ? opts.resolve(spec) : spec),
 		},
 		isIdle: () => true,
+		hasPendingMessages: () => false,
 	};
 	if (opts.model) ctx.model = opts.model;
 	return ctx;

@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import type { ExtensionAPI, ExtensionContext, ProviderConfig } from "@oh-my-pi/pi-coding-agent";
+import { refreshAliases } from "../src/refresh-aliases.ts";
+const image = { provider: "agp", id: "codex/image", kind: "image", api: "openai-images", baseUrl: "https://fixture.invalid/v1" };
+const current = { provider: "agp", id: "codex/old", api: "agp:codex:openai-responses", baseUrl: "https://fixture.invalid/v1" };
+const route = { provider: "codex", id: "gpt-6.2-sol", api: "agp:codex:openai-responses", baseUrl: "https://fixture.invalid/v1", name: "Sol" };
+let registered: ProviderConfig | undefined;
+const pi = { registerProvider(name: string, config: ProviderConfig) { assert.equal(name, "agp"); registered = config; } };
+const context = { models: { list: () => [image, current, route, { provider: "ds", id: "direct", api: "openai-completions" }], current: () => current } };
+refreshAliases(pi as unknown as ExtensionAPI, context as unknown as ExtensionContext, "https://fixture.invalid/v1", { apiKey: "SYNTHETIC_NATIVE_KEY_REF" });
+assert.ok(registered);
+assert.deepEqual(registered.models?.map(model => model.id), ["codex/image", "codex/old", "codex/gpt-6.2-sol"]);
+assert.equal(registered.models?.find(model => model.id === "codex/gpt-6.2-sol")?.api, route.api);
+assert.equal(registered.models?.find(model => model.id === "codex/image")?.api, "openai-images");
+assert.equal(context.models.current(), current, "selected model must stay unchanged");
+assert.equal(registered.apiKey, "SYNTHETIC_NATIVE_KEY_REF", "native credential reference must be preserved");

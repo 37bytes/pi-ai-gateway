@@ -179,6 +179,21 @@ export function buildProfileCatalog(
 			addCatalogModel(catalog, base, entry.wireId);
 		}
 	}
+	const routes = new Set<string>();
+	for (const provider of discovery.builtinProviders) {
+		const selected = namespaced.builtinProviders[agpProviderName(profile, provider.name)];
+		if (!selected?.enabled) continue;
+		for (const model of provider.models) {
+			if (selected.models?.includes(model.id) && (cfg.overrides[model.id]?.kind ?? model.kind) !== "image") routes.add(model.wireId ?? model.id);
+		}
+	}
+	for (const provider of Object.values(namespaced.customProviders)) {
+		for (const model of provider.models) {
+			const entry = discovery.customPool.find((candidate) => candidate.id === model.id);
+			if (entry && (cfg.overrides[entry.id]?.kind ?? model.kind ?? entry.kind) !== "image") routes.add(entry.wireId ?? entry.id);
+		}
+	}
+	catalog.providers.set("agp", routes);
 	return catalog;
 }
 
@@ -320,6 +335,7 @@ export async function applyAll(
 		models: GatewayModelConfig[],
 		routes: Map<string, string>,
 	) => {
+		const wireRoutes = new Set(routes.values());
 		const bridgeAPI = `agp:${name}:${api}`;
 		const gatewayBaseUrl = baseUrlFor(api, cfg.proxy.endpoint);
 		const endpointSuffix =
@@ -370,8 +386,9 @@ export async function applyAll(
 				if (gate && !gate(options?.sessionId)) {
 					throw new Error("Gateway request does not belong to its registered environment");
 				}
+				const alias = model.provider === "agp";
 				if (
-					model.provider !== name ||
+					(!alias && model.provider !== name) ||
 					model.api !== bridgeAPI ||
 					model.baseUrl !== gatewayBaseUrl
 				) {
@@ -379,7 +396,9 @@ export async function applyAll(
 						"Gateway model transport identity does not match its registered provider",
 					);
 				}
-				const wireId = routes.get(model.id);
+				const wireId = alias
+					? (wireRoutes.has(model.id) ? model.id : undefined)
+					: routes.get(model.id);
 				if (!wireId) throw new Error(`Unknown gateway selector ${name}/${model.id}`);
 				const diagnostics = createLatencyDiagnostics();
 				const headers = new Headers(options?.headers);

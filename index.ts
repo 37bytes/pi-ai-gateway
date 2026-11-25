@@ -32,6 +32,7 @@ import { log, setLogSink } from "./src/log.ts";
 import { PROFILE_FLAG, type ProfileSnapshot, describeProfile } from "./src/profile-context.ts";
 import { ensureProfileLayout } from "./src/profiles-migration.ts";
 import { type SessionRuntime, runtimeFor } from "./src/session-runtime.ts";
+import { registerBbSession } from "./src/bb-session.ts";
 import { reportFooter } from "./src/status-footer.ts";
 import { renderQuotaSegment } from "./src/status-quota.ts";
 import {
@@ -489,6 +490,7 @@ export default async function aiGateway(pi: ExtensionAPI): Promise<void> {
 			note: `${current.label} environment (${current.origin})`,
 		};
 	});
+	registerBbSession(pi, runtime);
 
 	if (!headless && snapshot && snapshot.cfg.refreshIntervalMinutes > 0) {
 		const intervalMs = snapshot.cfg.refreshIntervalMinutes * 60_000;

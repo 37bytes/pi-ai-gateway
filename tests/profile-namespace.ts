@@ -221,7 +221,7 @@ assert.ok(privateNamespaced.customProviders["local-private"]);
 
 // --- 3. buildProfileCatalog --------------------------------------------------
 const catalog = buildProfileCatalog(cfg, discovery, "prod", ["prod", "test"]);
-assert.deepEqual([...catalog.providers.keys()].sort(), ["codex", "deepseek", "local-glm", "openai"]);
+assert.deepEqual([...catalog.providers.keys()].sort(), ["agp", "codex", "deepseek", "local-glm", "openai"]);
 assert.equal(catalogHas(catalog, "codex", "gpt-6-astra"), true);
 assert.equal(catalogHas(catalog, "codex", "codex/gpt-6-astra"), true);
 assert.equal(catalogHas(catalog, "deepseek", "deepseek-v4-flash"), true);

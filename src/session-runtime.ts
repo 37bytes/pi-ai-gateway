@@ -185,7 +185,7 @@ export interface SessionRuntime {
 	rebind(api: ExtensionAPI): void;
 	/** Move a live session to another environment (deliberate, keeps history). */
 	switchEnvironment(
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		id: string,
 		/** The command's own session handle; defaults to the newest one. */
 		api?: ExtensionAPI,
@@ -638,7 +638,7 @@ export function createSessionRuntime(
 		if (!catalog) return;
 		const plan = planModelMove(ctx, snapshot, catalog, profileIds());
 		if (plan.kind === "move") {
-			const moved = await applyModelChange(api, ctx, plan.selector, snapshot.label);
+			const moved = await applyModelChange(api, ctx, plan.selector, snapshot);
 			if (!moved) log.warn(`could not align the session model with ${snapshot.id}`);
 			return;
 		}
@@ -696,7 +696,7 @@ export function createSessionRuntime(
 	 * serve this session.
 	 */
 	const prepareSwitch = async (
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		id: string,
 	): Promise<SwitchPreparation> => {
 		const registry = readRegistry();
@@ -850,7 +850,7 @@ export function createSessionRuntime(
 			registerDiscovery(snapshot, pending.discovery);
 			report = await applySnapshot(snapshot, pending.discovery, api);
 			await applyRoleMapping(snapshot);
-			if (pending.selector && !(await applyModelChange(api, ctx, pending.selector, snapshot.label))) {
+			if (pending.selector && !(await applyModelChange(api, ctx, pending.selector, snapshot))) {
 				failure = `this host would not select ${pending.selector}`;
 			}
 		} catch (err) {
@@ -889,12 +889,13 @@ export function createSessionRuntime(
 	};
 
 	const switchEnvironment = async (
-		ctx: ExtensionCommandContext,
+		ctx: ExtensionContext,
 		id: string,
 		api: ExtensionAPI = runtimeApi(),
 	): Promise<{ ok: boolean; message: string }> => {
 		const prepared = await prepareSwitch(ctx, id);
 		if (!prepared.ok) return prepared;
+		if (!ctx.isIdle() || ctx.hasPendingMessages()) return { ok: false, message: "session became busy while preparing the profile switch" };
 		const { discovery, plan, previous, previousSnapshot, stayingOn } = prepared;
 		const sessionKey = sessionIdOf(ctx) ?? ROOT_SESSION_KEY;
 
@@ -909,7 +910,7 @@ export function createSessionRuntime(
 			registerDiscovery(snapshot, discovery);
 			report = await applySnapshot(snapshot, discovery, api);
 			await applyRoleMapping(snapshot);
-			if (plan.kind === "move" && !(await applyModelChange(api, ctx, plan.selector, snapshot.label))) {
+			if (plan.kind === "move" && !(await applyModelChange(api, ctx, plan.selector, snapshot))) {
 				failure = `this host would not select ${plan.selector}`;
 			}
 		} catch (err) {

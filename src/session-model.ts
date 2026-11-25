@@ -65,9 +65,20 @@ export async function applyModelChange(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	selector: string,
-	what: string,
+	snapshot: ProfileSnapshot,
 ): Promise<boolean> {
-	const resolved = ctx.models?.resolve?.(selector);
+	const alias = selector.startsWith("agp/");
+	const targetSelector = alias ? selector.slice(4) : selector;
+	const resolved = ctx.models?.resolve?.(targetSelector);
+	const what = snapshot.label;
+	if (alias) {
+		const target = splitSelector(targetSelector);
+		const anthropic = resolved?.api?.endsWith(":anthropic-messages");
+		if (!target || !resolved || resolved.provider !== target.provider || resolved.id !== target.model || !resolved.api?.startsWith(`agp:${target.provider}:`) || resolved.baseUrl !== baseUrlFor(anthropic ? "anthropic-messages" : "openai-completions", snapshot.endpoint)) {
+			log.warn(`${what}: gateway alias did not resolve to the target transport`);
+			return false;
+		}
+	}
 	if (!resolved) {
 		log.warn(
 			`${what} names ${selector} on this environment but this host could not resolve it — ` +
@@ -80,7 +91,7 @@ export async function applyModelChange(
 	const thinking = pi.getThinkingLevel?.();
 	const tiers = (pi as unknown as TierReadback).getServiceTiers?.() ?? {};
 	try {
-		const selected = await pi.setModel(resolved);
+		const selected = await pi.setModel(alias ? { ...resolved, provider: "agp", id: targetSelector } : resolved);
 		if (!selected) {
 			log.warn(`host declined the model change to ${selector} (no usable credential)`);
 			return false;
@@ -141,6 +152,14 @@ export function planModelMove(
 	const id = current.id;
 	if (!provider || !id) return { kind: "impossible", selector: "(unknown model)" };
 	const selector = `${provider}/${id}`;
+	if (provider === "agp") {
+		if (!catalog.providers.get("agp")?.has(id)) return { kind: "impossible", selector };
+		const route = splitSelector(id);
+		const anthropic = current.api?.endsWith(":anthropic-messages");
+		return route && current.api?.startsWith(`agp:${route.provider}:`) && current.baseUrl === baseUrlFor(anthropic ? "anthropic-messages" : "openai-completions", snapshot.endpoint)
+			? { kind: "none" }
+			: { kind: "move", selector };
+	}
 	const mapped = mapSelector(selector, profileIds, catalog);
 	if (mapped) return { kind: "move", selector: mapped.mapped };
 	const namespace = agpProfileOf(provider, profileIds);
@@ -201,7 +220,7 @@ export async function adoptStoredSessionModel(
 	if (!mapped) return false;
 	const target = splitSelector(mapped.mapped);
 	if (target && current?.provider === target.provider && current.id === target.model) return false;
-	const moved = await applyModelChange(pi, ctx, mapped.mapped, snapshot.label);
+	const moved = await applyModelChange(pi, ctx, mapped.mapped, snapshot);
 	if (moved) log.info(`session model ${stored} moved to ${mapped.mapped} on ${snapshot.id}`);
 	return moved;
 }

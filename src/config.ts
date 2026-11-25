@@ -207,6 +207,16 @@ export function loadConfig(
 	}
 }
 
+/** BB reads must never migrate files or replace an invalid profile with defaults. */
+export function readConfig(profileId: string): ProxyConfig {
+	const raw: unknown = JSON.parse(readFileSync(profilePaths(profileId).configPath, "utf8"));
+	if (!raw || typeof raw !== "object" || !("proxy" in raw) || !raw.proxy || typeof raw.proxy !== "object" ||
+		!("endpoint" in raw.proxy) || typeof raw.proxy.endpoint !== "string" ||
+		!("apiKey" in raw.proxy) || typeof raw.proxy.apiKey !== "string" ||
+		("usageKey" in raw.proxy && typeof raw.proxy.usageKey !== "string")) throw new Error("AGP profile configuration is invalid");
+	return normalizeConfig(raw);
+}
+
 /** Persist one profile's config, 0600 and atomically. */
 export function saveConfig(
 	profileId: string,

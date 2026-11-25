@@ -152,6 +152,7 @@ interface CtxMock {
 	sessionManager: { getSessionId(): string; getEntries(): Array<{ type: string }> };
 	models: { list(): Array<{ provider: string }> };
 	isIdle(): boolean;
+	hasPendingMessages(): boolean;
 }
 
 function makeCtx(opts: {
@@ -167,6 +168,7 @@ function makeCtx(opts: {
 		},
 		models: { list: () => (opts.providers ?? []).map((provider) => ({ provider })) },
 		isIdle: () => true,
+		hasPendingMessages: () => false,
 	};
 }
 
